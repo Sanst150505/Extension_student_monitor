@@ -1,0 +1,21 @@
+{
+  "manifest_version": 3,
+  "name": "AI Engagement Monitor",
+  "version": "1.0",
+  "description": "Real-time student engagement monitoring for video calls",
+  "permissions": ["activeTab", "alarms"],
+  "host_permissions": [
+    "http://localhost:8000/*",
+    "https://meet.google.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://meet.google.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
