@@ -24,23 +24,11 @@ import DashboardLayout from "@/components/DashboardLayout";
 import { getStats, getStudentProfile, getSummary } from "@/lib/api";
 
 export default function ParentDashboard() {
-  const summaryQuery = useQuery({
-    queryKey: ["summary"],
-    queryFn: getSummary,
-    refetchInterval: 5000,
-    refetchOnWindowFocus: true,
-  });
-  const statsQuery = useQuery({
-    queryKey: ["stats"],
-    queryFn: getStats,
-    refetchInterval: 5000,
-    refetchOnWindowFocus: true,
-  });
+  const summaryQuery = useQuery({ queryKey: ["summary"], queryFn: getSummary });
+  const statsQuery = useQuery({ queryKey: ["stats"], queryFn: getStats });
   const profileQuery = useQuery({
     queryKey: ["student-profile", "demo_user"],
     queryFn: () => getStudentProfile("demo_user"),
-    refetchInterval: 5000,
-    refetchOnWindowFocus: true,
   });
 
   const summary = summaryQuery.data;
@@ -106,7 +94,7 @@ export default function ParentDashboard() {
               </div>
               <div>
                 <p className="text-sm text-muted-foreground">Frames Logged</p>
-                <p className="text-2xl font-display font-bold text-foreground">{summary?.total_frames ?? 0}</p>
+                <p className="text-2xl font-display font-bold text-foreground">{summary?.total_logs ?? 0}</p>
               </div>
             </div>
           </GlassCard>

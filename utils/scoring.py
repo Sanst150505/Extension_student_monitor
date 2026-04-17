@@ -1,176 +1,112 @@
 """
 utils/scoring.py
 ----------------
-Combines detector outputs into a single engagement score (0–100).
-
-Weight table:
-  Eye Attention    30 %
-  Head Pose        15 %
-  Yawning/Fatigue  15 %
-  Emotion          10 %
-  Phone Detection  10 %
-  Participation    10 %   (hand raise)
-  Presence         10 %
-
-Output bands:
-  80–100  → Engaged
-  50–79   → Neutral
-  <50     → Distracted
+Simple stable engagement scoring for hackathon demo.
 """
 
+import time
 from collections import deque
 
-# ── Rolling average window (smooths jitter) ───────────────────────────────────
-_WINDOW = 30                             # frames
-_score_history: deque = deque(maxlen=_WINDOW)
+STATE_BUFFER_SIZE = 20
+NO_FACE_TIMEOUT_SECONDS = 1.0
 
-# For the analytics graph (capped to prevent memory leak)
-_MAX_TIMELINE = 10000
-score_timeline: list[float] = []
-
-
-def compute_score(
-    face_results:  list[dict],
-    pose_result:   dict,
-    phone_result:  dict,
-    emotion:       str,
-) -> dict:
-    """
-    face_results  : list from detectors/face.py  (may be empty = no face)
-    pose_result   : dict  from detectors/pose.py
-    phone_result  : dict  from detectors/phone.py
-    emotion       : str   from detectors/emotion.py
-
-    Returns:
-        raw_score    : int  0-100 (unsmoothed)
-        smooth_score : int  0-100 (rolling average)
-        status       : str  Engaged / Neutral / Distracted
-        components   : dict breakdown of each sub-score
-    """
-
-    # ── Presence (10 %) ───────────────────────────────────────────────────────
-    num_faces      = len(face_results)
-    presence_score = 100 if num_faces == 1 else (50 if num_faces > 1 else 0)
-
-    if num_faces == 0:
-        # No face → immediate Distracted, skip rest
-        _update_history(0)
-        return _build(0, 0, "Distracted", {
-            "presence": 0, "eye": 0, "head": 0,
-            "fatigue": 0, "emotion": 0, "phone": 0, "participation": 0,
-        })
-
-    # Use primary face (face_id == 0)
-    face = face_results[0]
-
-    # ── Eye Attention (30 %) ──────────────────────────────────────────────────
-    eye_score = 100
-    if face.get("asleep", False):
-        eye_score = 0
-    elif not face.get("eyes_open", True):
-        eye_score = 20
-    elif face.get("gaze_away", False):
-        eye_score = 40
-
-    # Blink rate penalty: normal 10–20 bpm; very low (<5) or very high (>30) = tired
-    blink = face.get("blink_rate", 15.0)
-    if blink < 5 or blink > 30:
-        eye_score = max(0, eye_score - 15)
-
-    # ── Head Pose (15 %) ──────────────────────────────────────────────────────
-    direction  = pose_result.get("head_direction", "Forward")
-    head_score = {
-        "Forward": 100,
-        "Down":    20,    # possible phone / writing
-        "Left":    50,
-        "Right":   50,
-        "Up":      70,
-    }.get(direction, 70)
-
-    # ── Yawning / Fatigue (15 %) ──────────────────────────────────────────────
-    if face.get("yawning", False) or face.get("asleep", False):
-        fatigue_score = 0
-    elif face.get("ear", 0.25) < 0.22:
-        fatigue_score = 40   # drowsy
-    else:
-        fatigue_score = 100
-
-    # ── Emotion (10 %) ────────────────────────────────────────────────────────
-    emotion_score = {
-        "Happy":      100,
-        "Focused":     90,
-        "Neutral":     80,
-        "Surprised":   70,
-        "Confused":    60,
-        "Distracted":  40,
-        "Bored":       30,
-        "Sleepy":      10,
-    }.get(emotion, 80)
-
-    # ── Phone Detection (10 %) ────────────────────────────────────────────────
-    phone_score = 0 if phone_result.get("phone_detected") else 100
-
-    # ── Participation (10 %) ─────────────────────────────────────────────────
-    participation_score = 100 if pose_result.get("hand_raised") else 60
-
-    # ── Weighted sum ──────────────────────────────────────────────────────────
-    components = {
-        "presence":      presence_score,
-        "eye":           eye_score,
-        "head":          head_score,
-        "fatigue":       fatigue_score,
-        "emotion":       emotion_score,
-        "phone":         phone_score,
-        "participation": participation_score,
-    }
-
-    weights = {
-        "presence":      0.10,
-        "eye":           0.30,
-        "head":          0.15,
-        "fatigue":       0.15,
-        "emotion":       0.10,
-        "phone":         0.10,
-        "participation": 0.10,
-    }
-
-    raw = sum(components[k] * weights[k] for k in components)
-    raw = int(max(0, min(100, raw)))
-
-    smooth = _update_history(raw)
-    status = _status(smooth)
-
-    # Cap timeline to prevent unbounded growth
-    if len(score_timeline) < _MAX_TIMELINE:
-        score_timeline.append(smooth)
-
-    return _build(raw, smooth, status, components)
+_previous_score = 70.0
+_state_buffer = deque(maxlen=STATE_BUFFER_SIZE)
+_last_face_seen_at = 0.0
 
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
-def _update_history(raw: int) -> int:
-    _score_history.append(raw)
-    return int(sum(_score_history) / len(_score_history))
+def _base_state(face_detected, eyes_closed, gaze_away, head_direction, yawning):
+    if not face_detected:
+        return "No Face"
+    if eyes_closed or yawning:
+        return "Sleepy"
+    if gaze_away or head_direction in {"Left", "Right"}:
+        return "Distracted"
+    return "Attentive"
 
 
-def _status(score: int) -> str:
-    if score >= 80:
-        return "Engaged"
-    if score >= 50:
-        return "Neutral"
-    return "Distracted"
+def _smoothed_state(current_state):
+    _state_buffer.append(current_state)
+    counts = {}
+    for state in _state_buffer:
+        counts[state] = counts.get(state, 0) + 1
+    return max(counts, key=counts.get)
 
 
-def _build(raw, smooth, status, components) -> dict:
+def _emotion_for_state(state, gaze_away):
+    if state == "Sleepy":
+        return "Sleepy"
+    if state == "Distracted" or gaze_away:
+        return "Bored"
+    if state == "No Face":
+        return "No Face"
+    return "Engaged"
+
+
+def compute_score(face_results, pose_result, phone_result, emotion):
+    global _previous_score, _last_face_seen_at
+
+    now = time.time()
+    face = face_results[0] if face_results else {}
+    face_detected = len(face_results) > 0
+
+    if face_detected:
+        _last_face_seen_at = now
+
+    no_face_active = (not face_detected) and ((now - _last_face_seen_at) > NO_FACE_TIMEOUT_SECONDS)
+    eyes_closed = bool(face.get("eyes_closed", False))
+    gaze_away = bool(face.get("gaze_away", False))
+    yawning = bool(face.get("yawning", False))
+    head_direction = pose_result.get("head_direction", "Unknown")
+    phone_detected = bool(phone_result.get("phone_detected", False))
+
+    current_state = _base_state(
+        face_detected=not no_face_active,
+        eyes_closed=eyes_closed,
+        gaze_away=gaze_away,
+        head_direction=head_direction,
+        yawning=yawning,
+    )
+    stable_state = _smoothed_state(current_state)
+
+    raw_score = 70
+    if stable_state == "Attentive":
+        raw_score += 20
+    if gaze_away or head_direction in {"Left", "Right"}:
+        raw_score -= 20
+    if eyes_closed:
+        raw_score -= 40
+    if phone_detected:
+        raw_score -= 30
+    if stable_state == "No Face":
+        raw_score = 0
+
+    raw_score = max(0, min(100, raw_score))
+    smooth_score = round(0.6 * _previous_score + 0.4 * raw_score, 1)
+    _previous_score = smooth_score
+
+    final_emotion = _emotion_for_state(stable_state, gaze_away) if emotion in {"Engaged", "Bored", "Sleepy", "No Face"} else emotion
+
     return {
-        "raw_score":    raw,
-        "smooth_score": smooth,
-        "status":       status,
-        "components":   components,
+        "raw_score": raw_score,
+        "smooth_score": smooth_score,
+        "status": stable_state,
+        "current_state": stable_state,
+        "emotion": final_emotion,
+        "gaze_status": "Away" if gaze_away else "Centered",
+        "components": {
+            "base": 70,
+            "attention_bonus": 20 if stable_state == "Attentive" else 0,
+            "gaze_penalty": -20 if (gaze_away or head_direction in {"Left", "Right"}) else 0,
+            "eyes_penalty": -40 if eyes_closed else 0,
+            "phone_penalty": -30 if phone_detected else 0,
+        },
+        "buffer_size": len(_state_buffer),
     }
 
 
 def reset():
-    """Reset scoring state (useful between sessions)."""
-    _score_history.clear()
-    score_timeline.clear()
+    global _previous_score, _last_face_seen_at
+    _previous_score = 70.0
+    _last_face_seen_at = 0.0
+    _state_buffer.clear()

@@ -1,28 +1,89 @@
 /**
- * background.js — Manifest V3 Service Worker
- *
- * Keeps the extension alive and manages state across content script reloads.
+ * background.js - Manifest V3 service worker
  */
 
-// Extension installed or updated
-chrome.runtime.onInstalled.addListener((details) => {
+const STORAGE_KEY = "ai_monitor_student_profile";
+let profileCache = null;
+
+if (chrome?.runtime?.onInstalled) {
+  chrome.runtime.onInstalled.addListener((details) => {
     console.log("[AI Monitor] Extension installed/updated:", details.reason);
-});
+  });
+}
 
-// Keep-alive: Manifest V3 service workers can go idle after ~30s.
-// This alarm fires every 25s to keep it alive during active monitoring.
-chrome.alarms.create("keepAlive", { periodInMinutes: 0.4 });
-chrome.alarms.onAlarm.addListener((alarm) => {
+if (chrome?.alarms?.create && chrome?.alarms?.onAlarm) {
+  chrome.alarms.create("keepAlive", { periodInMinutes: 0.4 });
+  chrome.alarms.onAlarm.addListener((alarm) => {
     if (alarm.name === "keepAlive") {
-        // No-op — just keeps the service worker alive
+      // no-op
     }
-});
+  });
+}
 
-// Listen for messages from content script (future: relay results to popup)
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    if (message.type === "STATUS") {
-        console.log("[AI Monitor] Status from content:", message.data);
-        sendResponse({ ok: true });
+function readProfile() {
+  return new Promise((resolve, reject) => {
+    if (!chrome?.storage?.local) {
+      resolve(profileCache);
+      return;
     }
-    return true;  // keep channel open for async response
-});
+
+    chrome.storage.local.get(STORAGE_KEY, (result) => {
+      if (chrome.runtime.lastError) {
+        reject(new Error(chrome.runtime.lastError.message));
+        return;
+      }
+      profileCache = result[STORAGE_KEY] || profileCache || null;
+      resolve(profileCache);
+    });
+  });
+}
+
+function writeProfile(profile) {
+  return new Promise((resolve, reject) => {
+    profileCache = profile;
+
+    if (!chrome?.storage?.local) {
+      resolve();
+      return;
+    }
+
+    chrome.storage.local.set({ [STORAGE_KEY]: profile }, () => {
+      if (chrome.runtime.lastError) {
+        reject(new Error(chrome.runtime.lastError.message));
+        return;
+      }
+      resolve();
+    });
+  });
+}
+
+if (chrome?.runtime?.onMessage) {
+  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    if (message?.type === "STATUS") {
+      console.log("[AI Monitor] Status from content:", message.data);
+      sendResponse({ ok: true });
+      return true;
+    }
+
+    if (message?.type === "GET_CONFIG") {
+      readProfile()
+        .then((profile) => sendResponse({ ok: true, profile }))
+        .catch((error) => sendResponse({ ok: false, error: error.message }));
+      return true;
+    }
+
+    if (message?.type === "SAVE_CONFIG") {
+      writeProfile(message.profile)
+        .then(() => {
+          if (chrome?.runtime?.sendMessage) {
+            chrome.runtime.sendMessage({ type: "CONFIG_UPDATED", profile: message.profile });
+          }
+          sendResponse({ ok: true });
+        })
+        .catch((error) => sendResponse({ ok: false, error: error.message }));
+      return true;
+    }
+
+    return false;
+  });
+}

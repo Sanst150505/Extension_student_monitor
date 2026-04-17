@@ -131,11 +131,13 @@
   <div class="wrap">
     <div class="card">
       <h1>AI Engagement Monitor</h1>
-      <p class="sub">Save the student session details used by the realtime websocket stream.</p>
+      <p class="sub">Save the student details used while monitoring the current Google Meet session.</p>
 
       <div class="form">
+        <input id="student-id" type="text" placeholder="Student ID" />
         <input id="student-name" type="text" placeholder="Student name" />
         <input id="subject" type="text" placeholder="Subject" />
+        <input id="batch" type="text" placeholder="Batch / Section" />
         <input id="meet-link" type="url" placeholder="Google Meet link" />
         <button id="save-config" type="button">Save Session</button>
       </div>
@@ -155,7 +157,7 @@
         </div>
       </div>
 
-      <p class="note">Open Google Meet before starting the monitoring stream.</p>
+      <p class="note">Open Google Meet, save once here, then reload the Meet tab if needed.</p>
     </div>
   </div>
 

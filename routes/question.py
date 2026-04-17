@@ -1,39 +1,72 @@
-from fastapi import APIRouter, Query
 from datetime import datetime, timezone
-from services.question import generate_mcq
-from services.scoring import mark_question_sent
+from uuid import uuid4
+
+from fastapi import APIRouter, Query
+
 from db import question_logs
+from services.monitoring import mark_question_sent
+from services.scoring import mark_question_sent as mark_legacy_question_sent
+from services.question import generate_mcq
 
 router = APIRouter()
 
+
 @router.get("/generate-question")
 async def get_question(
+    student_id: str = Query("demo_user"),
+    student_name: str = Query("Student"),
+    subject: str = Query("General"),
+    batch: str = Query("General"),
+    session_id: str = Query("demo_session"),
     topic: str = Query("General Knowledge"),
-    difficulty: str = Query("medium")
+    difficulty: str = Query("medium"),
 ):
-    """
-    Triggers AI question generation and logs it.
-    """
-    # 1. Generate Question
-    question_data = generate_mcq(topic, difficulty)
+    question_data = generate_mcq(topic or subject, difficulty)
+    question_id = uuid4().hex
 
-    # 2. Log to MongoDB
+    payload = {
+        "question_id": question_id,
+        "student_id": student_id,
+        "student_name": student_name,
+        "subject": subject,
+        "batch": batch,
+        "session_id": session_id,
+        "difficulty": difficulty,
+        "topic": topic or subject,
+        "question": question_data["question"],
+        "options": question_data["options"],
+        "answer": question_data["answer"],
+        "timestamp": datetime.now(timezone.utc),
+    }
+
     if question_logs is not None:
         try:
-            log_doc = {
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "student_id": "demo_user",
-                "question": question_data["question"],
-                "options": question_data["options"],
-                "correct_answer": question_data["answer"],
-                "difficulty": difficulty,
-                "topic": topic
-            }
-            question_logs.insert_one(log_doc)
-        except Exception as e:
-            print(f"[MongoDB] ⚠️ Failed to log question: {e}")
+            question_logs.insert_one(payload)
+        except Exception as exc:
+            print(f"[MongoDB] Failed to log question: {exc}")
 
-    # 3. Update cooldown timer
-    mark_question_sent()
+    mark_question_sent(
+        {
+            "student_id": student_id,
+            "subject": subject,
+            "batch": batch,
+            "session_id": session_id,
+        },
+        question_id,
+    )
+    mark_legacy_question_sent()
 
-    return question_data
+    return {
+        "question_id": question_id,
+        "student_id": student_id,
+        "student_name": student_name,
+        "subject": subject,
+        "batch": batch,
+        "session_id": session_id,
+        "difficulty": difficulty,
+        "topic": topic or subject,
+        "question": question_data["question"],
+        "options": question_data["options"],
+        "answer": question_data["answer"],
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }

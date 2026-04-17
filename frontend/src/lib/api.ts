@@ -1,72 +1,108 @@
 const API_BASE = import.meta.env.VITE_API_BASE || "/api";
-const WS_BASE = import.meta.env.VITE_WS_BASE || "ws://localhost:8000";
 
-async function fetchJson<T>(path: string): Promise<T> {
-  const response = await fetch(`${API_BASE}${path}`);
-
-  if (!response.ok) {
-    throw new Error(`Request failed with status ${response.status}`);
-  }
-
-  return response.json();
+export interface StatsFilters {
+  subject?: string;
+  batch?: string;
+  session_id?: string;
 }
 
-async function postJson<T>(path: string, body: unknown): Promise<T> {
-  const response = await fetch(`${API_BASE}${path}`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(body),
-  });
+function buildQuery(filters?: StatsFilters) {
+  const params = new URLSearchParams();
+  if (filters?.subject) params.set("subject", filters.subject);
+  if (filters?.batch) params.set("batch", filters.batch);
+  if (filters?.session_id) params.set("session_id", filters.session_id);
+  const query = params.toString();
+  return query ? `?${query}` : "";
+}
 
+async function fetchJson<T>(path: string, filters?: StatsFilters): Promise<T> {
+  const response = await fetch(`${API_BASE}${path}${buildQuery(filters)}`);
   if (!response.ok) {
     throw new Error(`Request failed with status ${response.status}`);
   }
-
   return response.json();
 }
 
 export interface SummaryResponse {
   avg_engagement_score: number;
+  avg_question_score: number;
+  avg_final_score: number;
   most_common_emotion: string;
-  total_frames: number;
+  total_logs: number;
   total_idle_events: number;
   total_tab_switches: number;
+  total_students: number;
+  distracted_students: number;
 }
 
 export interface StatEntry {
   timestamp: string;
-  engagement_score: number;
-  attention_score?: number;
-  emotion: string;
-  status?: string;
   student_id?: string;
-  meet_link?: string;
+  student_name?: string;
+  subject?: string;
+  batch?: string;
+  session_id?: string;
+  engagement_score: number;
+  emotion: string;
+  attention_status?: string;
+  head_direction?: string;
+  phone_detected?: boolean;
 }
 
 export interface StudentHistoryEntry {
   timestamp: string;
   engagement_score: number;
-  attention_score?: number;
   emotion: string;
-  status?: string;
-  face_detected: boolean;
+  attention_status?: string;
+  head_direction?: string;
   phone_detected: boolean;
-  asleep: boolean;
+  eyes_closed?: boolean;
+  closed_frames?: number;
   gaze_away: boolean;
   yawning: boolean;
-  blink_rate?: number;
-  head_pose?: string;
-  metrics?: Record<string, unknown>;
+}
+
+export interface StudentAssessmentEntry {
+  timestamp: string;
+  question_id?: string;
+  score: number;
+  correct: boolean;
+  response_time: number;
 }
 
 export interface StudentProfileResponse {
   student_id: string;
-  total_frames: number;
+  total_logs: number;
   avg_score: number;
   risk_level: "low" | "medium" | "high" | "unknown";
+  current_state: string;
+  emotion: string;
+  trend: "up" | "down" | "stable";
   history: StudentHistoryEntry[];
+  assessments: StudentAssessmentEntry[];
+  avg_question_score: number;
+  question_attempts: number;
+  avg_response_time: number;
+  final_score: number;
+}
+
+export interface StudentOverview {
+  student_id: string;
+  name: string;
+  engagement_score: number;
+  avg_engagement_score: number;
+  attention_status: string;
+  emotion: string;
+  head_direction: string;
+  phone_detected: boolean;
+  trend: "up" | "down" | "stable";
+  score_band: "high" | "moderate" | "low";
+  dominant_emotion: string;
+  avg_question_score: number;
+  question_attempts: number;
+  correct_answers: number;
+  avg_response_time: number;
+  final_score: number;
 }
 
 export interface HealthResponse {
@@ -74,108 +110,22 @@ export interface HealthResponse {
   mongo: string;
 }
 
-export interface StudentJoinRequest {
-  student_id?: string;
-  name: string;
-  subject: string;
-  meet_link: string;
+export function getSummary(filters?: StatsFilters) {
+  return fetchJson<SummaryResponse>("/summary", filters);
 }
 
-export interface SessionStartRequest {
-  session_id?: string;
-  teacher_name: string;
-  subject: string;
-  batch_time: string;
-  meet_link: string;
+export function getStats(filters?: StatsFilters) {
+  return fetchJson<StatEntry[]>("/stats", filters);
 }
 
-export interface StudentCard {
-  student_id: string;
-  name: string;
-  subject: string;
-  meet_link: string;
-  streak: number;
-  badge: string;
-  badges: string[];
-  presence: boolean;
-  attention_score: number;
-  status: string;
-  blink_rate: number;
-  head_pose: string;
-  yawning: boolean;
-  last_seen?: string;
+export function getStudentProfile(studentId: string, filters?: StatsFilters) {
+  return fetchJson<StudentProfileResponse>(`/student/${studentId}`, filters);
 }
 
-export interface StudentJoinResponse {
-  ok: boolean;
-  student: {
-    student_id: string;
-    name: string;
-    subject: string;
-    meet_link: string;
-    streak?: number;
-    badge?: string;
-    badges?: string[];
-  };
-}
-
-export interface SessionStartResponse {
-  ok: boolean;
-  session: {
-    session_id: string;
-    teacher_name: string;
-    subject: string;
-    batch_time: string;
-    meet_link: string;
-    active: boolean;
-  };
-}
-
-export interface StudentLogSummary {
-  total_focus_time: number;
-  distraction_count: number;
-  avg_score: number;
-}
-
-export interface StudentLogsResponse {
-  student_id: string;
-  history: StudentHistoryEntry[];
-  summary: StudentLogSummary;
-}
-
-export function getSummary() {
-  return fetchJson<SummaryResponse>("/summary");
-}
-
-export function getStats() {
-  return fetchJson<StatEntry[]>("/stats");
-}
-
-export function getStudentProfile(studentId: string) {
-  return fetchJson<StudentProfileResponse>(`/student/${studentId}`);
+export function getStudentsOverview(filters?: StatsFilters) {
+  return fetchJson<StudentOverview[]>("/students", filters);
 }
 
 export function getHealth() {
   return fetchJson<HealthResponse>("/health");
-}
-
-export function joinStudent(payload: StudentJoinRequest) {
-  return postJson<StudentJoinResponse>("/join", payload);
-}
-
-export function startSession(payload: SessionStartRequest) {
-  return postJson<SessionStartResponse>("/start-session", payload);
-}
-
-export function getTeacherStudents(meetLink = "") {
-  const query = meetLink ? `?meet_link=${encodeURIComponent(meetLink)}` : "";
-  return fetchJson<StudentCard[]>(`/teacher/students${query}`);
-}
-
-export function getStudentLogs(studentId: string, limit = 120) {
-  return fetchJson<StudentLogsResponse>(`/students/${studentId}/logs?limit=${limit}`);
-}
-
-export function getWebsocketBase() {
-  return WS_BASE;
 }

@@ -10,11 +10,11 @@ import { cn } from "@/lib/utils";
 const navItems = {
   student: [
     { label: "Dashboard", icon: LayoutDashboard, path: "/student" },
-    { label: "Focus Timeline", icon: BarChart3, path: "/student/details" },
+    { label: "Focus Timeline", icon: BarChart3, path: "/student" },
     { label: "AI Coach", icon: Brain, path: "/student" },
     { label: "Calendar", icon: Calendar, path: "/student" },
     { label: "Rewards", icon: Trophy, path: "/student" },
-    { label: "Profile", icon: User, path: "/student/details" },
+    { label: "Profile", icon: User, path: "/student" },
   ],
   teacher: [
     { label: "Dashboard", icon: LayoutDashboard, path: "/teacher" },

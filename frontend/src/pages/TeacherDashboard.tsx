@@ -1,251 +1,391 @@
-import { useMemo, useState, type FormEvent } from "react";
-import { useNavigate } from "react-router-dom";
-import { AlertTriangle, Link as LinkIcon, PlayCircle, RefreshCw, ShieldCheck, Users } from "lucide-react";
-import GlassCard from "@/components/GlassCard";
+import { useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import {
+  AlertTriangle,
+  BarChart3,
+  Brain,
+  Database,
+  Eye,
+  ShieldAlert,
+  TrendingDown,
+  TrendingUp,
+  Minus,
+} from "lucide-react";
+import {
+  CartesianGrid,
+  Cell,
+  Line,
+  LineChart,
+  Pie,
+  PieChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
+
 import DashboardLayout from "@/components/DashboardLayout";
-import { joinStudent, startSession } from "@/lib/api";
-import { useTeacherLiveFeed } from "@/hooks/useTeacherLiveFeed";
+import GlassCard from "@/components/GlassCard";
+import { getHealth, getStats, getStudentsOverview, getSummary, type StatsFilters } from "@/lib/api";
+import { extractSessionId } from "@/lib/session";
+import { useSmoothedNumber } from "@/hooks/useSmoothedNumber";
+
+const POLL_INTERVAL = 2000;
+
+const COLORS = {
+  high: "hsl(145 65% 48%)",
+  moderate: "hsl(38 92% 55%)",
+  low: "hsl(0 72% 55%)",
+  info: "hsl(173 80% 50%)",
+};
+
+function formatLabel(timestamp: string) {
+  return new Date(timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+function TrendIcon({ trend }: { trend: "up" | "down" | "stable" }) {
+  if (trend === "up") return <TrendingUp className="h-4 w-4 text-success" />;
+  if (trend === "down") return <TrendingDown className="h-4 w-4 text-destructive" />;
+  return <Minus className="h-4 w-4 text-muted-foreground" />;
+}
 
 function scoreTone(score: number) {
-  if (score > 75) {
-    return "text-success bg-success/10 border-success/20";
-  }
-
-  if (score >= 50) {
-    return "text-warning bg-warning/10 border-warning/20";
-  }
-
-  return "text-destructive bg-destructive/10 border-destructive/20";
+  if (score >= 80) return "text-success bg-success/10";
+  if (score >= 60) return "text-warning bg-warning/10";
+  return "text-destructive bg-destructive/10";
 }
 
 export default function TeacherDashboard() {
-  const navigate = useNavigate();
-  const [teacherName, setTeacherName] = useState("Professor");
-  const [subject, setSubject] = useState("General");
-  const [batchTime, setBatchTime] = useState("09:00 AM");
-  const [meetLink, setMeetLink] = useState("");
-  const [statusMessage, setStatusMessage] = useState("Start a session to connect the live websocket stream.");
-  const [saving, setSaving] = useState(false);
+  const [filters, setFilters] = useState<StatsFilters>({
+    subject: "",
+    batch: "",
+    session_id: "",
+  });
 
-  const liveFeed = useTeacherLiveFeed(meetLink.trim());
-  const students = liveFeed.students;
-
-  const stats = useMemo(() => {
-    const total = students.length;
-    const focused = students.filter((student) => student.attention_score > 75).length;
-    const distracted = students.filter((student) => student.attention_score <= 75).length;
-    const present = students.filter((student) => student.presence).length;
-
-    return { total, focused, distracted, present };
-  }, [students]);
-
-  const handleStartSession = async (event: FormEvent) => {
-    event.preventDefault();
-    setSaving(true);
-    setStatusMessage("Starting session...");
-
+  useEffect(() => {
     try {
-      const response = await startSession({
-        teacher_name: teacherName,
-        subject,
-        batch_time: batchTime,
-        meet_link: meetLink.trim(),
-      });
-
-      setStatusMessage(`Session active: ${response.session.session_id}`);
-      localStorage.setItem(
-        "smartengage_teacher_session",
-        JSON.stringify({
-          teacher_name: teacherName,
-          subject,
-          batch_time: batchTime,
-          meet_link: meetLink.trim(),
-          session_id: response.session.session_id,
-        })
-      );
-    } catch (error) {
-      setStatusMessage(error instanceof Error ? error.message : "Unable to start session.");
-    } finally {
-      setSaving(false);
+      const stored = localStorage.getItem("smartengage_teacher_filters");
+      if (stored) {
+        setFilters((current) => ({ ...current, ...JSON.parse(stored) }));
+      }
+    } catch {
+      // ignore invalid persisted state
     }
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem("smartengage_teacher_filters", JSON.stringify(filters));
+  }, [filters]);
+
+  const activeFilters: StatsFilters = {
+    subject: filters.subject?.trim() || undefined,
+    batch: filters.batch?.trim() || undefined,
+    session_id: extractSessionId(filters.session_id),
   };
 
-  const handleQuickJoin = async (studentId: string) => {
-    const student = students.find((item) => item.student_id === studentId);
-    if (!student) {
-      return;
-    }
+  const summaryQuery = useQuery({
+    queryKey: ["summary", activeFilters],
+    queryFn: () => getSummary(activeFilters),
+    refetchInterval: POLL_INTERVAL,
+  });
+  const statsQuery = useQuery({
+    queryKey: ["stats", activeFilters],
+    queryFn: () => getStats(activeFilters),
+    refetchInterval: POLL_INTERVAL,
+  });
+  const studentsQuery = useQuery({
+    queryKey: ["students", activeFilters],
+    queryFn: () => getStudentsOverview(activeFilters),
+    refetchInterval: POLL_INTERVAL,
+  });
+  const healthQuery = useQuery({
+    queryKey: ["health"],
+    queryFn: getHealth,
+    refetchInterval: POLL_INTERVAL * 2,
+  });
 
-    await joinStudent({
-      student_id: student.student_id,
-      name: student.name,
-      subject: student.subject,
-      meet_link: student.meet_link,
-    });
+  const summary = summaryQuery.data;
+  const stats = statsQuery.data ?? [];
+  const students = studentsQuery.data ?? [];
+  const health = healthQuery.data;
 
-    navigate(`/teacher/student/${student.student_id}`);
-  };
+  const smoothedAverage = Math.round(useSmoothedNumber(summary?.avg_engagement_score ?? 0));
+  const smoothedFinal = Math.round(useSmoothedNumber(summary?.avg_final_score ?? 0));
+
+  const recentTrend = stats
+    .slice(0, 20)
+    .reverse()
+    .map((entry) => ({
+      time: formatLabel(entry.timestamp),
+      score: Math.round(entry.engagement_score ?? 0),
+    }));
+
+  const distribution = [
+    { name: "Focused", value: students.filter((student) => student.engagement_score >= 80).length, color: COLORS.high },
+    { name: "Watch", value: students.filter((student) => student.engagement_score >= 60 && student.engagement_score < 80).length, color: COLORS.moderate },
+    { name: "Intervene", value: students.filter((student) => student.engagement_score < 60).length, color: COLORS.low },
+  ].filter((item) => item.value > 0);
+
+  const loading = summaryQuery.isLoading || studentsQuery.isLoading;
 
   return (
     <DashboardLayout>
       <div className="space-y-6">
-        <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+          <div className="space-y-2">
+            <p className="text-sm uppercase tracking-[0.2em] text-primary">Live Review</p>
+            <h2 className="font-display text-3xl font-bold text-foreground">Continuous Assessment Console</h2>
+            <p className="max-w-2xl text-sm text-muted-foreground">
+              Real-time classroom engagement, intervention signals, and question performance for the current subject and batch.
+            </p>
+          </div>
+
+          <div className="grid w-full gap-3 rounded-2xl border border-border bg-card/60 p-4 lg:max-w-3xl lg:grid-cols-3">
+            <input
+              className="rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground"
+              placeholder="Subject"
+              value={filters.subject ?? ""}
+              onChange={(event) => setFilters((current) => ({ ...current, subject: event.target.value }))}
+            />
+            <input
+              className="rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground"
+              placeholder="Batch"
+              value={filters.batch ?? ""}
+              onChange={(event) => setFilters((current) => ({ ...current, batch: event.target.value }))}
+            />
+            <input
+              className="rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground"
+              placeholder="Session ID (optional)"
+              value={filters.session_id ?? ""}
+              onChange={(event) => setFilters((current) => ({ ...current, session_id: event.target.value }))}
+            />
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
           <GlassCard hover={false}>
             <div className="flex items-center gap-3">
-              <div className="h-10 w-10 rounded-lg gradient-primary flex items-center justify-center">
-                <Users className="h-5 w-5 text-primary-foreground" />
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg gradient-primary">
+                <BarChart3 className="h-5 w-5 text-primary-foreground" />
               </div>
               <div>
-                <p className="text-sm text-muted-foreground">Live Students</p>
-                <p className="text-2xl font-display font-bold text-foreground">{stats.total}</p>
+                <p className="text-sm text-muted-foreground">Avg Engagement</p>
+                <p className="text-2xl font-display font-bold text-foreground">{smoothedAverage}%</p>
               </div>
             </div>
           </GlassCard>
+
           <GlassCard hover={false}>
             <div className="flex items-center gap-3">
-              <div className="h-10 w-10 rounded-lg gradient-accent flex items-center justify-center">
-                <ShieldCheck className="h-5 w-5 text-accent-foreground" />
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg gradient-accent">
+                <Brain className="h-5 w-5 text-accent-foreground" />
               </div>
               <div>
-                <p className="text-sm text-muted-foreground">Focused</p>
-                <p className="text-2xl font-display font-bold text-foreground">{stats.focused}</p>
+                <p className="text-sm text-muted-foreground">Avg Question Score</p>
+                <p className="text-2xl font-display font-bold text-foreground">{Math.round(summary?.avg_question_score ?? 0)}%</p>
               </div>
             </div>
           </GlassCard>
+
           <GlassCard hover={false}>
             <div className="flex items-center gap-3">
-              <div className="h-10 w-10 rounded-lg bg-warning/20 flex items-center justify-center">
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-warning/20">
                 <AlertTriangle className="h-5 w-5 text-warning" />
               </div>
               <div>
-                <p className="text-sm text-muted-foreground">Needs Attention</p>
-                <p className="text-2xl font-display font-bold text-foreground">{stats.distracted}</p>
+                <p className="text-sm text-muted-foreground">Need Attention</p>
+                <p className="text-2xl font-display font-bold text-foreground">{summary?.distracted_students ?? 0}</p>
               </div>
             </div>
           </GlassCard>
+
           <GlassCard hover={false}>
             <div className="flex items-center gap-3">
-              <div className="h-10 w-10 rounded-lg bg-info/20 flex items-center justify-center">
-                <RefreshCw className="h-5 w-5 text-info" />
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-destructive/20">
+                <ShieldAlert className="h-5 w-5 text-destructive" />
               </div>
               <div>
-                <p className="text-sm text-muted-foreground">Connection</p>
-                <p className="text-sm font-semibold text-foreground capitalize">{liveFeed.connectionState}</p>
+                <p className="text-sm text-muted-foreground">Avg Final Score</p>
+                <p className="text-2xl font-display font-bold text-foreground">{smoothedFinal}%</p>
+              </div>
+            </div>
+          </GlassCard>
+        </div>
+
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+          <GlassCard hover={false} className="lg:col-span-2">
+            <h3 className="mb-4 font-display font-semibold text-foreground">Class Engagement Trend</h3>
+            {recentTrend.length ? (
+              <ResponsiveContainer width="100%" height={260}>
+                <LineChart data={recentTrend}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(222 20% 18%)" />
+                  <XAxis dataKey="time" stroke="hsl(215 20% 55%)" fontSize={12} />
+                  <YAxis stroke="hsl(215 20% 55%)" fontSize={12} />
+                  <Tooltip contentStyle={{ background: "hsl(222 40% 10%)", border: "1px solid hsl(222 20% 18%)", borderRadius: "8px" }} />
+                  <Line type="monotone" dataKey="score" stroke={COLORS.info} strokeWidth={3} dot={{ r: 3, fill: COLORS.info }} />
+                </LineChart>
+              </ResponsiveContainer>
+            ) : (
+              <p className="text-sm text-muted-foreground">No recent engagement logs for the current filters.</p>
+            )}
+          </GlassCard>
+
+          <GlassCard hover={false}>
+            <h3 className="mb-4 font-display font-semibold text-foreground">Engagement Distribution</h3>
+            {distribution.length ? (
+              <>
+                <ResponsiveContainer width="100%" height={220}>
+                  <PieChart>
+                    <Pie data={distribution} dataKey="value" innerRadius={52} outerRadius={84}>
+                      {distribution.map((entry) => (
+                        <Cell key={entry.name} fill={entry.color} />
+                      ))}
+                    </Pie>
+                    <Tooltip contentStyle={{ background: "hsl(222 40% 10%)", border: "1px solid hsl(222 20% 18%)", borderRadius: "8px" }} />
+                  </PieChart>
+                </ResponsiveContainer>
+                <div className="space-y-2">
+                  {distribution.map((entry) => (
+                    <div key={entry.name} className="flex items-center justify-between text-sm">
+                      <div className="flex items-center gap-2">
+                        <span className="h-2.5 w-2.5 rounded-full" style={{ background: entry.color }} />
+                        <span className="text-muted-foreground">{entry.name}</span>
+                      </div>
+                      <span className="font-medium text-foreground">{entry.value}</span>
+                    </div>
+                  ))}
+                </div>
+              </>
+            ) : (
+              <p className="text-sm text-muted-foreground">No student records for the selected scope.</p>
+            )}
+          </GlassCard>
+        </div>
+
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+          <GlassCard hover={false}>
+            <div className="mb-4 flex items-center gap-2">
+              <Eye className="h-5 w-5 text-primary" />
+              <h3 className="font-display font-semibold text-foreground">Student Monitoring Table</h3>
+            </div>
+            {students.length ? (
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead>
+                    <tr className="border-b border-border">
+                      <th className="px-4 py-3 text-left text-sm font-medium text-muted-foreground">Student</th>
+                      <th className="px-4 py-3 text-left text-sm font-medium text-muted-foreground">Attention</th>
+                      <th className="px-4 py-3 text-left text-sm font-medium text-muted-foreground">Engagement</th>
+                      <th className="px-4 py-3 text-left text-sm font-medium text-muted-foreground">Emotion</th>
+                      <th className="px-4 py-3 text-left text-sm font-medium text-muted-foreground">Question</th>
+                      <th className="px-4 py-3 text-left text-sm font-medium text-muted-foreground">Final</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {students.map((student) => (
+                      <tr key={student.student_id} className="border-b border-border/50">
+                        <td className="px-4 py-3 text-sm text-foreground">
+                          <div className="font-medium">{student.name}</div>
+                          <div className="text-xs text-muted-foreground">{student.student_id}</div>
+                        </td>
+                        <td className="px-4 py-3 text-sm text-muted-foreground">{student.attention_status}</td>
+                        <td className="px-4 py-3 text-sm text-foreground">{Math.round(student.engagement_score)}%</td>
+                        <td className="px-4 py-3 text-sm text-muted-foreground">{student.emotion}</td>
+                        <td className="px-4 py-3 text-sm text-foreground">{Math.round(student.avg_question_score)}%</td>
+                        <td className="px-4 py-3 text-sm text-foreground">{Math.round(student.final_score)}%</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground">No students found for the current subject and batch.</p>
+            )}
+          </GlassCard>
+
+          <GlassCard hover={false}>
+            <div className="mb-4 flex items-center gap-2">
+              <Database className="h-5 w-5 text-primary" />
+              <h3 className="font-display font-semibold text-foreground">Classroom Summary</h3>
+            </div>
+            <div className="space-y-4 text-sm">
+              <div className="rounded-lg border border-border bg-muted/20 p-4">
+                <p className="text-muted-foreground">Current Scope</p>
+                <p className="mt-1 text-lg font-semibold text-foreground">
+                  {(activeFilters.subject ?? "All Subjects")} · {(activeFilters.batch ?? "All Batches")}
+                </p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {activeFilters.session_id ? `Session ${activeFilters.session_id}` : "All active sessions"}
+                </p>
+              </div>
+              <div className="rounded-lg border border-border bg-muted/20 p-4">
+                <p className="text-muted-foreground">System Health</p>
+                <p className="mt-1 text-lg font-semibold text-foreground">{health?.mongo ?? "--"}</p>
+              </div>
+              <div className="rounded-lg border border-border bg-muted/20 p-4">
+                <p className="text-muted-foreground">Idle + Tab Switch Events</p>
+                <p className="mt-1 text-lg font-semibold text-foreground">
+                  {(summary?.total_idle_events ?? 0) + (summary?.total_tab_switches ?? 0)}
+                </p>
+              </div>
+              <div className="rounded-lg border border-border bg-muted/20 p-4">
+                <p className="text-muted-foreground">Stored Engagement Logs</p>
+                <p className="mt-1 text-lg font-semibold text-foreground">{summary?.total_logs ?? 0}</p>
               </div>
             </div>
           </GlassCard>
         </div>
 
         <GlassCard hover={false}>
-          <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
-            <div>
-              <p className="text-sm uppercase tracking-[0.2em] text-primary">Session Control</p>
-              <h2 className="font-display text-2xl font-bold text-foreground">Start a live class session</h2>
-              <p className="text-sm text-muted-foreground">Teacher and extension traffic stays scoped to the same Meet link.</p>
-            </div>
-            <div className="rounded-full border border-border bg-muted/30 px-4 py-2 text-sm text-muted-foreground">
-              {statusMessage}
-            </div>
+          <div className="mb-4 flex items-center gap-2">
+            <Database className="h-5 w-5 text-primary" />
+            <h3 className="font-display font-semibold text-foreground">At-Risk Students</h3>
           </div>
-
-          <form onSubmit={handleStartSession} className="mt-6 grid gap-4 lg:grid-cols-4">
-            <input
-              value={teacherName}
-              onChange={(event) => setTeacherName(event.target.value)}
-              placeholder="Teacher name"
-              className="w-full rounded-xl border border-border bg-muted/20 px-4 py-3 text-foreground outline-none transition focus:border-primary"
-            />
-            <input
-              value={subject}
-              onChange={(event) => setSubject(event.target.value)}
-              placeholder="Subject"
-              className="w-full rounded-xl border border-border bg-muted/20 px-4 py-3 text-foreground outline-none transition focus:border-primary"
-            />
-            <input
-              value={batchTime}
-              onChange={(event) => setBatchTime(event.target.value)}
-              placeholder="Batch time"
-              className="w-full rounded-xl border border-border bg-muted/20 px-4 py-3 text-foreground outline-none transition focus:border-primary"
-            />
-            <div className="flex gap-3">
-              <input
-                value={meetLink}
-                onChange={(event) => setMeetLink(event.target.value)}
-                placeholder="Google Meet link"
-                className="min-w-0 flex-1 rounded-xl border border-border bg-muted/20 px-4 py-3 text-foreground outline-none transition focus:border-primary"
-              />
-              <button
-                type="submit"
-                disabled={saving || !meetLink.trim()}
-                className="inline-flex items-center gap-2 rounded-xl gradient-primary px-4 py-3 font-semibold text-primary-foreground transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                <PlayCircle className="h-4 w-4" />
-                {saving ? "Starting" : "Start"}
-              </button>
+          {loading ? (
+            <p className="text-sm text-muted-foreground">Loading classroom analytics...</p>
+          ) : students.length ? (
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+              {students
+                .filter((student) => student.attention_status !== "Focused" || student.avg_question_score < 60)
+                .map((student) => (
+                  <div key={student.student_id} className="rounded-xl border border-border bg-muted/20 p-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-medium text-foreground">{student.name}</p>
+                        <p className="text-xs text-muted-foreground">{student.attention_status}</p>
+                      </div>
+                      <div className={`rounded-full px-2 py-1 text-xs font-medium ${scoreTone(student.final_score)}`}>
+                        {Math.round(student.final_score)}%
+                      </div>
+                    </div>
+                    <div className="mt-3 space-y-2 text-sm text-muted-foreground">
+                      <div className="flex items-center justify-between">
+                        <span>Engagement</span>
+                        <span className="text-foreground">{Math.round(student.engagement_score)}%</span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span>Question Score</span>
+                        <span className="text-foreground">{Math.round(student.avg_question_score)}%</span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span>Emotion</span>
+                        <span className="text-foreground">{student.emotion}</span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span>Trend</span>
+                        <div className="flex items-center gap-1">
+                          <TrendIcon trend={student.trend} />
+                          <span className="capitalize text-foreground">{student.trend}</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ))}
             </div>
-          </form>
+          ) : (
+            <p className="text-sm text-muted-foreground">No data to review yet.</p>
+          )}
         </GlassCard>
-
-        <div className="flex items-center justify-between gap-4">
-          <div>
-            <p className="text-sm uppercase tracking-[0.2em] text-primary">Live Grid</p>
-            <h3 className="font-display text-2xl font-bold text-foreground">Students for the current Meet link</h3>
-          </div>
-          <div className="flex items-center gap-2 rounded-full border border-border bg-muted/20 px-4 py-2 text-sm text-muted-foreground">
-            <LinkIcon className="h-4 w-4" />
-            {meetLink.trim() || "No meet link selected"}
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-          {students.map((student) => (
-            <GlassCard key={student.student_id} hover={false}>
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <p className="text-lg font-semibold text-foreground">{student.name}</p>
-                  <p className="text-sm text-muted-foreground">{student.subject}</p>
-                </div>
-                <span className={`rounded-full border px-3 py-1 text-xs font-medium ${scoreTone(student.attention_score)}`}>
-                  {student.status}
-                </span>
-              </div>
-
-              <div className="mt-5 grid grid-cols-3 gap-3 text-sm">
-                <div className="rounded-xl border border-border bg-muted/20 p-3">
-                  <p className="text-muted-foreground">Score</p>
-                  <p className="mt-1 text-xl font-bold text-foreground">{Math.round(student.attention_score)}</p>
-                </div>
-                <div className="rounded-xl border border-border bg-muted/20 p-3">
-                  <p className="text-muted-foreground">Presence</p>
-                  <p className="mt-1 text-xl font-bold text-foreground">{student.presence ? "Here" : "Away"}</p>
-                </div>
-                <div className="rounded-xl border border-border bg-muted/20 p-3">
-                  <p className="text-muted-foreground">Streak</p>
-                  <p className="mt-1 text-xl font-bold text-foreground">{student.streak}</p>
-                </div>
-              </div>
-
-              <div className="mt-4 flex items-center justify-between text-sm text-muted-foreground">
-                <span>{student.badge || "No badge yet"}</span>
-                <button
-                  type="button"
-                  onClick={() => handleQuickJoin(student.student_id)}
-                  className="text-primary hover:underline"
-                >
-                  Open detail
-                </button>
-              </div>
-            </GlassCard>
-          ))}
-        </div>
-
-        {!students.length ? (
-          <GlassCard hover={false}>
-            <p className="text-sm text-muted-foreground">
-              No students are connected for this Meet link yet. Start the session and make sure the extension popup has the same link saved.
-            </p>
-          </GlassCard>
-        ) : null}
       </div>
     </DashboardLayout>
   );

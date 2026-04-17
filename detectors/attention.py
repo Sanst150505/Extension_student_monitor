@@ -1,10 +1,8 @@
-# detectors/attention.py
-
 from collections import deque
 
-# smooth last N frames
+
 _HISTORY = {}
-WINDOW = 10
+WINDOW = 6
 
 
 def _get_history(face_id):
@@ -14,49 +12,48 @@ def _get_history(face_id):
 
 
 def compute_attention(face, pose, phone):
-    face_id = face["face_id"]
+    face_id = face.get("face_id", 0)
     history = _get_history(face_id)
 
-    score = 100
+    if not face:
+        history.append(0)
+        return "Not Attentive", 0.0
 
-    # 🚨 Hard conditions
-    if face["asleep"]:
-        return "Sleeping", 0
+    score = 100.0
+    closed_frames = int(face.get("closed_frames", 0))
 
-    # 👁️ Gaze
-    if face["gaze_away"]:
-        score -= 25
+    if closed_frames >= 18:
+        history.append(0)
+        return "Sleeping", 0.0
 
-    # 🧠 Head direction
-    if pose["head_direction"] != "Forward":
+    if face.get("gaze_away"):
+        score -= 20
+    if pose.get("head_direction") in {"Left", "Right"}:
+        score -= 18
+    elif pose.get("head_direction") == "Down":
+        score -= 22
+    elif pose.get("head_direction") == "Up":
+        score -= 12
+    if phone.get("phone_detected"):
+        score -= 35
+    if face.get("yawning"):
+        score -= 10
+    if closed_frames >= 10:
+        score -= 40
+    elif closed_frames >= 4 or face.get("eyes_closed"):
         score -= 20
 
-    # 📱 Phone
-    if phone["phone_detected"]:
-        score -= 40
-
-    # 😮 Yawning
-    if face["yawning"]:
-        score -= 15
-
-    # 👀 Blink abnormal
-    if face["blink_rate"] < 6:
-        score -= 10
-
-    score = max(0, min(100, score))
-
-    # 📊 Smooth score
+    score = max(0.0, min(100.0, score))
     history.append(score)
     smooth_score = sum(history) / len(history)
 
-    # 🏷️ Label
-    if smooth_score > 75:
+    if smooth_score >= 80:
         label = "Focused"
-    elif smooth_score > 50:
-        label = "Semi-Focused"
-    elif smooth_score > 25:
+    elif smooth_score >= 60:
+        label = "Slightly Distracted"
+    elif smooth_score >= 35:
         label = "Distracted"
     else:
-        label = "Highly Distracted"
+        label = "Not Attentive"
 
     return label, round(smooth_score, 1)

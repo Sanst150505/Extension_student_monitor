@@ -2,7 +2,7 @@
 main.py
 -------
 FastAPI entry point for AI Student Engagement Monitor.
-Now refactored to use modular routes.
+Optimized version (no structural changes).
 """
 
 from fastapi import FastAPI
@@ -12,31 +12,48 @@ import uvicorn
 # Import modular routers
 from routes import analyze, question, answer, events, stats
 
-app = FastAPI(title="AI Engagement Monitor", version="2.0.0")
+# 🚀 App initialization
+app = FastAPI(
+    title="AI Engagement Monitor",
+    version="2.0.1",  # slight bump
+)
 
-# ── CORS Configuration ────────────────────────────────────────────────────────
+
+# ── CORS Configuration (OPTIMIZED) ────────────────────────────────────────────
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "https://meet.google.com",
-        "chrome-extension://*",
-        "http://localhost:3000",
-        "http://localhost:4173",
-        "http://localhost:5173",
-        "http://localhost:8080",
-        "http://localhost:8000",
-    ],
+    allow_origins=["*"],  # 🔥 Reliable for extension + Meet
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# ── Include Routers ───────────────────────────────────────────────────────────
-app.include_router(analyze.router)
-app.include_router(question.router)
-app.include_router(answer.router)
-app.include_router(events.router)
-app.include_router(stats.router)
 
+# ── Include Routers ───────────────────────────────────────────────────────────
+app.include_router(analyze.router, tags=["Analyze"])
+app.include_router(question.router, tags=["Question"])
+app.include_router(answer.router, tags=["Answer"])
+app.include_router(events.router, tags=["Events"])
+app.include_router(stats.router, tags=["Stats"])
+
+
+# ── Health Check (VERY USEFUL for debugging) ──────────────────────────────────
+@app.get("/")
+def root():
+    return {"status": "AI Engagement Monitor running 🚀"}
+
+
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+
+
+# ── Run Server ────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run(
+        "main:app",
+        host="0.0.0.0",
+        port=8000,
+        reload=True,
+        log_level="info",  # cleaner logs
+    )
