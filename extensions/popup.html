@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Engagement Monitor</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f4f7fb;
+      --panel: #ffffff;
+      --text: #122033;
+      --muted: #5d6b82;
+      --accent: #0f6cbd;
+      --ok: #137333;
+      --warn: #b06000;
+      --border: #d9e2ef;
+    }
+
+    body {
+      margin: 0;
+      width: 360px;
+      font-family: "Segoe UI", Tahoma, sans-serif;
+      background: radial-gradient(circle at top, #eef6ff 0%, var(--bg) 55%, #edf2f9 100%);
+      color: var(--text);
+    }
+
+    .wrap {
+      padding: 16px;
+    }
+
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      box-shadow: 0 10px 28px rgba(18, 32, 51, 0.08);
+      padding: 16px;
+    }
+
+    h1 {
+      margin: 0 0 6px;
+      font-size: 18px;
+    }
+
+    p {
+      margin: 0;
+      line-height: 1.45;
+    }
+
+    .sub {
+      color: var(--muted);
+      font-size: 13px;
+      margin-bottom: 14px;
+    }
+
+    .status {
+      display: grid;
+      gap: 10px;
+      margin: 14px 0;
+    }
+
+    .row {
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 10px 12px;
+      background: #fbfdff;
+    }
+
+    .label {
+      font-size: 12px;
+      color: var(--muted);
+      margin-bottom: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    .value {
+      font-size: 14px;
+      font-weight: 600;
+      word-break: break-word;
+    }
+
+    .ok {
+      color: var(--ok);
+    }
+
+    .warn {
+      color: var(--warn);
+    }
+
+    .form {
+      display: grid;
+      gap: 10px;
+      margin-top: 14px;
+    }
+
+    input {
+      width: 100%;
+      box-sizing: border-box;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 10px 12px;
+      font: inherit;
+      color: var(--text);
+      background: #fff;
+    }
+
+    button {
+      border: none;
+      border-radius: 12px;
+      padding: 11px 14px;
+      font: inherit;
+      font-weight: 700;
+      color: #fff;
+      background: linear-gradient(135deg, var(--accent), #0e8fd6);
+      cursor: pointer;
+    }
+
+    button:hover {
+      filter: brightness(1.03);
+    }
+
+    .note {
+      margin-top: 10px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <h1>AI Engagement Monitor</h1>
+      <p class="sub">Save the student session details used by the realtime websocket stream.</p>
+
+      <div class="form">
+        <input id="student-name" type="text" placeholder="Student name" />
+        <input id="subject" type="text" placeholder="Subject" />
+        <input id="meet-link" type="url" placeholder="Google Meet link" />
+        <button id="save-config" type="button">Save Session</button>
+      </div>
+
+      <div class="status">
+        <div class="row">
+          <div class="label">Backend</div>
+          <div class="value" id="backend-status">Checking...</div>
+        </div>
+        <div class="row">
+          <div class="label">Current Tab</div>
+          <div class="value" id="tab-status">Checking...</div>
+        </div>
+        <div class="row">
+          <div class="label">Configured Student</div>
+          <div class="value" id="student-config">Not saved</div>
+        </div>
+      </div>
+
+      <p class="note">Open Google Meet before starting the monitoring stream.</p>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

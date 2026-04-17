@@ -1,16 +1,13 @@
 """
 detectors/face.py
 -----------------
-Stable face detection + attention metrics.
-
-Returns per-face:
-  eyes_open, asleep, gaze_away, yawning, emotion (heuristic),
-  ear, mar, bbox, face_id, blink_rate
+Stable face detection + STRONG gaze + attention signals.
 """
 
 import time
 import numpy as np
 import mediapipe as mp
+from collections import deque
 
 # ===============================
 # MediaPipe Setup
@@ -38,27 +35,21 @@ MOUTH_BOTTOM = 14
 MOUTH_LEFT = 61
 MOUTH_RIGHT = 291
 
-# All landmark indices used for bounding box computation
-_ALL_FACE_OVAL = list(range(0, 468))  # all base landmarks
+# ===============================
+# State Tracking
+# ===============================
+_blink_state = {}
+_yawn_state = {}
+_gaze_history = {}
 
 # ===============================
-# Blink & Yawn State Tracking
+# Thresholds
 # ===============================
-_blink_state = {}       # face_id → {prev_ear, blink_count, last_reset, last_open}
-_yawn_state = {}        # face_id → consecutive yawn frame count
-
-_BLINK_EAR_THRESHOLD = 0.20   # below this = eye closed
 _BLINK_REOPEN_THRESHOLD = 0.22
-_YAWN_CONSECUTIVE_FRAMES = 3  # require 3+ frames of MAR > threshold
+_YAWN_CONSECUTIVE_FRAMES = 3
 
-
-def _reset_blink_tracker(face_id: int):
-    _blink_state[face_id] = {
-        "prev_open": True,
-        "blink_count": 0,
-        "last_reset": time.time(),
-    }
-
+CENTER_MIN = 0.45
+CENTER_MAX = 0.55
 
 # ===============================
 # Helper Functions
@@ -67,24 +58,24 @@ def _dist(p1, p2):
     return np.linalg.norm(np.array(p1) - np.array(p2))
 
 
-def _ear(landmarks, eye_indices, w, h):
-    pts = [(int(landmarks[i].x * w), int(landmarks[i].y * h)) for i in eye_indices]
+def _ear(lm, idx, w, h):
+    pts = [(lm[i].x * w, lm[i].y * h) for i in idx]
     vertical = (_dist(pts[1], pts[5]) + _dist(pts[2], pts[4])) / 2.0
     horizontal = _dist(pts[0], pts[3]) + 1e-6
     return vertical / horizontal
 
 
-def _mar(landmarks, w, h):
-    top = (landmarks[MOUTH_TOP].x * w, landmarks[MOUTH_TOP].y * h)
-    bottom = (landmarks[MOUTH_BOTTOM].x * w, landmarks[MOUTH_BOTTOM].y * h)
-    left = (landmarks[MOUTH_LEFT].x * w, landmarks[MOUTH_LEFT].y * h)
-    right = (landmarks[MOUTH_RIGHT].x * w, landmarks[MOUTH_RIGHT].y * h)
+def _mar(lm, w, h):
+    top = (lm[MOUTH_TOP].x * w, lm[MOUTH_TOP].y * h)
+    bottom = (lm[MOUTH_BOTTOM].x * w, lm[MOUTH_BOTTOM].y * h)
+    left = (lm[MOUTH_LEFT].x * w, lm[MOUTH_LEFT].y * h)
+    right = (lm[MOUTH_RIGHT].x * w, lm[MOUTH_RIGHT].y * h)
     return _dist(top, bottom) / (_dist(left, right) + 1e-6)
 
 
-def _gaze_ratio(landmarks, eye_indices, iris_indices, w, h):
-    eye_pts = [(landmarks[i].x * w, landmarks[i].y * h) for i in eye_indices]
-    iris_pts = [(landmarks[i].x * w, landmarks[i].y * h) for i in iris_indices]
+def _gaze_ratio(lm, eye_idx, iris_idx, w, h):
+    eye_pts = [(lm[i].x * w, lm[i].y * h) for i in eye_idx]
+    iris_pts = [(lm[i].x * w, lm[i].y * h) for i in iris_idx]
 
     iris_center = np.mean([p[0] for p in iris_pts])
     eye_left = eye_pts[0][0]
@@ -93,54 +84,44 @@ def _gaze_ratio(landmarks, eye_indices, iris_indices, w, h):
     return (iris_center - eye_left) / (eye_right - eye_left + 1e-6)
 
 
-def _compute_bbox(landmarks, w, h):
-    """Compute tight bounding box from face landmarks."""
-    xs = [int(landmarks[i].x * w) for i in range(min(468, len(landmarks)))]
-    ys = [int(landmarks[i].y * h) for i in range(min(468, len(landmarks)))]
-    margin = 10
-    x1 = max(0, min(xs) - margin)
-    y1 = max(0, min(ys) - margin)
-    x2 = min(w, max(xs) + margin)
-    y2 = min(h, max(ys) + margin)
-    return (x1, y1, x2, y2)
+def _smooth_gaze(face_id, gaze):
+    if face_id not in _gaze_history:
+        _gaze_history[face_id] = deque(maxlen=5)
+
+    _gaze_history[face_id].append(gaze)
+    return sum(_gaze_history[face_id]) / len(_gaze_history[face_id])
 
 
-def _update_blink_rate(face_id: int, ear: float) -> float:
-    """
-    Track blinks using EAR transitions (open→closed→open = 1 blink).
-    Returns blinks per minute.
-    """
+def _update_blink_rate(face_id, ear):
     if face_id not in _blink_state:
-        _reset_blink_tracker(face_id)
+        _blink_state[face_id] = {
+            "prev_open": True,
+            "count": 0,
+            "last_reset": time.time(),
+        }
 
     state = _blink_state[face_id]
-    currently_open = ear > _BLINK_REOPEN_THRESHOLD
+    open_now = ear > _BLINK_REOPEN_THRESHOLD
 
-    # Detect blink: was open, now closed
-    if state["prev_open"] and not currently_open:
-        state["blink_count"] += 1
+    if state["prev_open"] and not open_now:
+        state["count"] += 1
 
-    state["prev_open"] = currently_open
+    state["prev_open"] = open_now
 
-    # Compute rate (blinks per minute)
     elapsed = time.time() - state["last_reset"]
-    if elapsed < 1.0:
-        return 15.0  # default until we have data
+    if elapsed < 1:
+        return 15.0
 
-    bpm = (state["blink_count"] / elapsed) * 60.0
+    bpm = (state["count"] / elapsed) * 60.0
 
-    # Reset counter every 60 seconds to stay current
-    if elapsed > 60.0:
-        _reset_blink_tracker(face_id)
+    if elapsed > 60:
+        _blink_state[face_id]["count"] = 0
+        _blink_state[face_id]["last_reset"] = time.time()
 
     return round(bpm, 1)
 
 
-def _update_yawn_state(face_id: int, mar: float) -> bool:
-    """
-    Require MAR > threshold for multiple consecutive frames to confirm yawning.
-    Prevents false positives from talking or brief mouth opening.
-    """
+def _update_yawn(face_id, mar):
     if face_id not in _yawn_state:
         _yawn_state[face_id] = 0
 
@@ -152,64 +133,75 @@ def _update_yawn_state(face_id: int, mar: float) -> bool:
     return _yawn_state[face_id] >= _YAWN_CONSECUTIVE_FRAMES
 
 
+def _bbox(lm, w, h):
+    xs = [int(p.x * w) for p in lm[:468]]
+    ys = [int(p.y * h) for p in lm[:468]]
+    return (min(xs), min(ys), max(xs), max(ys))
+
+
 # ===============================
 # Main Function
 # ===============================
 def detect_face(frame):
-    """
-    Returns list of face data dicts with keys:
-      eyes_open, asleep, gaze_away, yawning, emotion,
-      ear, mar, bbox, face_id, blink_rate, landmarks
-    """
     h, w = frame.shape[:2]
+    rgb = frame[:, :, ::-1]
 
     try:
-        rgb = frame[:, :, ::-1].copy()
-        results = FACE_MESH.process(rgb)
+        res = FACE_MESH.process(rgb)
     except Exception as e:
-        print(f"[FaceDetector] FaceMesh error: {e}")
+        print("FaceMesh error:", e)
         return []
 
-    if not results.multi_face_landmarks:
+    if not res.multi_face_landmarks:
         return []
 
     faces = []
 
-    for face_idx, face_lm in enumerate(results.multi_face_landmarks):
-        lm = face_lm.landmark
+    for i, face in enumerate(res.multi_face_landmarks):
+        lm = face.landmark
 
         try:
-            # ===== Bounding Box =====
-            bbox = _compute_bbox(lm, w, h)
+            # EAR
+            ear = (_ear(lm, LEFT_EYE, w, h) + _ear(lm, RIGHT_EYE, w, h)) / 2
+            asleep = ear < 0.18
 
-            # ===== Eye Aspect Ratio =====
-            left_ear = _ear(lm, LEFT_EYE, w, h)
-            right_ear = _ear(lm, RIGHT_EYE, w, h)
-            ear = (left_ear + right_ear) / 2
+            # Blink
+            blink_rate = _update_blink_rate(i, ear)
 
-            # Cast numpy.bool_ → Python bool (FastAPI can't serialize numpy types)
-            eyes_open = bool(ear > 0.22)
-            asleep = bool(ear < 0.18)
+            # Yawn
+            mar = _mar(lm, w, h)
+            yawning = _update_yawn(i, mar)
 
-            # ===== Blink Rate =====
-            blink_rate = float(_update_blink_rate(face_idx, ear))
-
-            # ===== Gaze Detection =====
-            gaze_away = False
+            # ===== GAZE (FIXED + STRONG) =====
             gaze = 0.5
+            gaze_dir = "Center"
+            gaze_away = False
+
             try:
                 lg = _gaze_ratio(lm, LEFT_EYE, LEFT_IRIS, w, h)
                 rg = _gaze_ratio(lm, RIGHT_EYE, RIGHT_IRIS, w, h)
-                gaze = float((lg + rg) / 2)
-                gaze_away = bool(gaze < 0.25 or gaze > 0.75)
-            except Exception:
-                pass
+                gaze = (lg + rg) / 2
 
-            # ===== Yawning (temporal) =====
-            mar = float(_mar(lm, w, h))
-            yawning = bool(_update_yawn_state(face_idx, mar))
+                # Smooth
+                gaze = _smooth_gaze(i, gaze)
 
-            # ===== Emotion (Simple Heuristic) =====
+                # Strict classification
+                if gaze < CENTER_MIN:
+                    gaze_dir = "Left"
+                    gaze_away = True
+                elif gaze > CENTER_MAX:
+                    gaze_dir = "Right"
+                    gaze_away = True
+                else:
+                    gaze_dir = "Center"
+
+                # Debug
+                print(f"[Gaze] {gaze:.2f} → {gaze_dir}")
+
+            except Exception as e:
+                print("Gaze error:", e)
+
+            # Emotion
             if asleep:
                 emotion = "Sleepy"
             elif yawning:
@@ -220,21 +212,21 @@ def detect_face(frame):
                 emotion = "Focused"
 
             faces.append({
-                "face_id": int(face_idx),
-                "bbox": tuple(int(v) for v in bbox),
-                "eyes_open": eyes_open,
-                "asleep": asleep,
-                "gaze_away": gaze_away,
-                "gaze": round(float(gaze), 3),
-                "yawning": yawning,
-                "emotion": emotion,
-                "ear": round(float(ear), 3),
-                "mar": round(float(mar), 3),
+                "face_id": i,
+                "bbox": _bbox(lm, w, h),
+                "ear": round(ear, 3),
+                "mar": round(mar, 3),
                 "blink_rate": blink_rate,
-                "landmarks": lm,       # pass to pose.py for reuse
+                "asleep": asleep,
+                "yawning": yawning,
+                "gaze": round(gaze, 3),
+                "gaze_direction": gaze_dir,
+                "gaze_away": gaze_away,
+                "emotion": emotion,
+                "landmarks": lm,
             })
 
         except Exception as e:
-            print(f"[FaceDetector] Face {face_idx} processing error: {e}")
+            print("Face error:", e)
 
     return faces

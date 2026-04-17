@@ -9,7 +9,11 @@ Functions:
   get_student_profile(id)    → full history, avg score, risk level
 """
 
-from db import engagement_logs, events_logs
+from db import attention_logs, engagement_logs, events_logs
+
+
+def _source_collection():
+    return attention_logs if attention_logs is not None else engagement_logs
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -17,20 +21,38 @@ from db import engagement_logs, events_logs
 # ──────────────────────────────────────────────────────────────────────────────
 def get_recent_stats(limit: int = 100) -> list:
     """Return the most recent engagement log entries."""
-    if engagement_logs is None:
+    source = _source_collection()
+    if source is None:
         return []
 
-    cursor = engagement_logs.find(
+    cursor = source.find(
         {},
         {
             "_id": 0,
             "timestamp": 1,
+            "attention_score": 1,
             "engagement_score": 1,
+            "status": 1,
             "emotion": 1,
         },
     ).sort("timestamp", -1).limit(limit)
 
-    return list(cursor)
+    stats = []
+    for item in cursor:
+        score = item.get("attention_score", item.get("engagement_score", 0))
+        stats.append(
+            {
+                "timestamp": item.get("timestamp"),
+                "attention_score": score,
+                "engagement_score": score,
+                "status": item.get("status", item.get("emotion", "Unknown")),
+                "emotion": item.get("emotion", item.get("status", "Unknown")),
+                "meet_link": item.get("meet_link"),
+                "student_id": item.get("student_id"),
+            }
+        )
+
+    return stats
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -38,7 +60,8 @@ def get_recent_stats(limit: int = 100) -> list:
 # ──────────────────────────────────────────────────────────────────────────────
 def get_summary() -> dict:
     """Return aggregate engagement summary."""
-    if engagement_logs is None:
+    source = _source_collection()
+    if source is None:
         return {
             "avg_engagement_score": 0,
             "most_common_emotion": "N/A",
@@ -48,22 +71,27 @@ def get_summary() -> dict:
         }
 
     # Total frames
-    total_frames = engagement_logs.count_documents({})
+    total_frames = source.count_documents({})
 
     # Average engagement score
     avg_pipeline = [
-        {"$group": {"_id": None, "avg_score": {"$avg": "$engagement_score"}}}
+        {
+            "$group": {
+                "_id": None,
+                "avg_score": {"$avg": {"$ifNull": ["$attention_score", "$engagement_score"]}},
+            }
+        }
     ]
-    avg_result = list(engagement_logs.aggregate(avg_pipeline))
+    avg_result = list(source.aggregate(avg_pipeline))
     avg_score = round(avg_result[0]["avg_score"], 1) if avg_result else 0
 
     # Most common emotion
     emotion_pipeline = [
-        {"$group": {"_id": "$emotion", "count": {"$sum": 1}}},
+        {"$group": {"_id": {"$ifNull": ["$status", "$emotion"]}, "count": {"$sum": 1}}},
         {"$sort": {"count": -1}},
         {"$limit": 1},
     ]
-    emotion_result = list(engagement_logs.aggregate(emotion_pipeline))
+    emotion_result = list(source.aggregate(emotion_pipeline))
     top_emotion = emotion_result[0]["_id"] if emotion_result else "N/A"
 
     # Event counts
@@ -87,7 +115,8 @@ def get_summary() -> dict:
 # ──────────────────────────────────────────────────────────────────────────────
 def get_student_profile(student_id: str) -> dict:
     """Return full engagement history and risk assessment for a student."""
-    if engagement_logs is None:
+    source = _source_collection()
+    if source is None:
         return {
             "student_id": student_id,
             "total_frames": 0,
@@ -97,18 +126,23 @@ def get_student_profile(student_id: str) -> dict:
         }
 
     # Full history for this student
-    cursor = engagement_logs.find(
+    cursor = source.find(
         {"student_id": student_id},
         {
             "_id": 0,
             "timestamp": 1,
+            "attention_score": 1,
             "engagement_score": 1,
             "emotion": 1,
+            "status": 1,
             "face_detected": 1,
             "phone_detected": 1,
             "asleep": 1,
             "gaze_away": 1,
             "yawning": 1,
+            "blink_rate": 1,
+            "head_pose": 1,
+            "metrics": 1,
         },
     ).sort("timestamp", -1)
 
@@ -118,7 +152,7 @@ def get_student_profile(student_id: str) -> dict:
     # Average score
     if total_frames > 0:
         avg_score = round(
-            sum(h.get("engagement_score", 0) for h in history) / total_frames, 1
+            sum(h.get("attention_score", h.get("engagement_score", 0)) for h in history) / total_frames, 1
         )
     else:
         avg_score = 0
