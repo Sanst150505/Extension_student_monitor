@@ -407,7 +407,7 @@ setInterval(() => {
       .then((response) => response.json())
       .then((data) => {
         updateOverlay(data, "Monitoring");
-        if (data.ask_question || data.engagement?.intervention?.ask_question) {
+        if (data.ask_question) {
           fetchQuestion(data.difficulty);
         }
         requestInFlight = false;

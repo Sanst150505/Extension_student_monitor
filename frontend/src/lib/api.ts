@@ -26,6 +26,7 @@ async function fetchJson<T>(path: string, filters?: StatsFilters): Promise<T> {
 export interface SummaryResponse {
   avg_engagement_score: number;
   avg_question_score: number;
+  avg_voice_score: number;
   avg_final_score: number;
   most_common_emotion: string;
   total_logs: number;
@@ -70,6 +71,14 @@ export interface StudentAssessmentEntry {
   response_time: number;
 }
 
+export interface VoiceHistoryEntry {
+  timestamp: string;
+  voice_score: number;
+  speaking_duration: number;
+  transcript: string;
+  status?: string;
+}
+
 export interface StudentProfileResponse {
   student_id: string;
   total_logs: number;
@@ -83,6 +92,11 @@ export interface StudentProfileResponse {
   avg_question_score: number;
   question_attempts: number;
   avg_response_time: number;
+  avg_voice_score: number;
+  voice_samples: number;
+  avg_speaking_duration: number;
+  latest_transcript: string;
+  voice_history: VoiceHistoryEntry[];
   final_score: number;
 }
 
@@ -102,12 +116,29 @@ export interface StudentOverview {
   question_attempts: number;
   correct_answers: number;
   avg_response_time: number;
+  avg_voice_score: number;
+  voice_samples: number;
+  latest_transcript: string;
   final_score: number;
 }
 
 export interface HealthResponse {
   status: string;
   mongo: string;
+}
+
+export interface VoiceEventPayload {
+  student_id: string;
+  student_name: string;
+  subject: string;
+  batch: string;
+  session_id: string;
+  transcript: string;
+  speaking_duration: number;
+  avg_volume: number;
+  peak_volume: number;
+  confidence: number;
+  status: string;
 }
 
 export function getSummary(filters?: StatsFilters) {
@@ -128,4 +159,16 @@ export function getStudentsOverview(filters?: StatsFilters) {
 
 export function getHealth() {
   return fetchJson<HealthResponse>("/health");
+}
+
+export async function postVoiceEvent(payload: VoiceEventPayload) {
+  const response = await fetch(`${API_BASE}/voice-event`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    throw new Error(`Request failed with status ${response.status}`);
+  }
+  return response.json();
 }

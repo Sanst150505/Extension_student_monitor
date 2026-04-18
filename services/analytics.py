@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections import Counter
 
-from db import assessments, engagement_logs, events_logs
+from db import assessments, engagement_logs, events_logs, voice_logs
 
 
 def _scope_filter(subject: str | None = None, batch: str | None = None, session_id: str | None = None) -> dict:
@@ -46,6 +46,7 @@ def _assessment_summary(student_id: str, scope: dict) -> dict:
             "question_attempts": 0,
             "correct_answers": 0,
             "avg_response_time": 0.0,
+            "recent": [],
         }
 
     docs = list(
@@ -67,6 +68,7 @@ def _assessment_summary(student_id: str, scope: dict) -> dict:
             "question_attempts": 0,
             "correct_answers": 0,
             "avg_response_time": 0.0,
+            "recent": [],
         }
 
     scores = [float(doc.get("score", 0)) for doc in docs]
@@ -76,6 +78,49 @@ def _assessment_summary(student_id: str, scope: dict) -> dict:
         "question_attempts": len(docs),
         "correct_answers": sum(1 for doc in docs if doc.get("correct")),
         "avg_response_time": round(sum(response_times) / len(response_times), 1) if response_times else 0.0,
+        "recent": docs[:10],
+    }
+
+
+def _voice_summary(student_id: str, scope: dict) -> dict:
+    if voice_logs is None:
+        return {
+            "avg_voice_score": 0.0,
+            "voice_samples": 0,
+            "avg_speaking_duration": 0.0,
+            "latest_transcript": "",
+            "recent": [],
+        }
+
+    docs = list(
+        voice_logs.find(
+            {"student_id": student_id, **scope},
+            {
+                "_id": 0,
+                "voice_score": 1,
+                "speaking_duration": 1,
+                "transcript": 1,
+                "status": 1,
+                "timestamp": 1,
+            },
+        ).sort("timestamp", -1)
+    )
+    if not docs:
+        return {
+            "avg_voice_score": 0.0,
+            "voice_samples": 0,
+            "avg_speaking_duration": 0.0,
+            "latest_transcript": "",
+            "recent": [],
+        }
+
+    scores = [float(doc.get("voice_score", 0)) for doc in docs]
+    durations = [float(doc.get("speaking_duration", 0)) for doc in docs]
+    return {
+        "avg_voice_score": round(sum(scores) / len(scores), 1),
+        "voice_samples": len(docs),
+        "avg_speaking_duration": round(sum(durations) / len(durations), 1) if durations else 0.0,
+        "latest_transcript": docs[0].get("transcript", ""),
         "recent": docs[:10],
     }
 
@@ -154,6 +199,7 @@ def get_students_overview(subject: str | None = None, batch: str | None = None, 
         scores = [float(item.get("engagement", {}).get("score", 0)) for item in history]
         emotion_values = [item.get("emotion", "No Data") for item in history]
         assessment_summary = _assessment_summary(student_id, scope)
+        voice_summary = _voice_summary(student_id, scope)
         avg_engagement_score = round(sum(scores) / len(scores), 1) if scores else 0.0
         final_score = round((0.6 * avg_engagement_score) + (0.4 * assessment_summary["avg_question_score"]), 1)
 
@@ -174,6 +220,9 @@ def get_students_overview(subject: str | None = None, batch: str | None = None, 
                 "question_attempts": assessment_summary["question_attempts"],
                 "correct_answers": assessment_summary["correct_answers"],
                 "avg_response_time": assessment_summary["avg_response_time"],
+                "avg_voice_score": voice_summary["avg_voice_score"],
+                "voice_samples": voice_summary["voice_samples"],
+                "latest_transcript": voice_summary["latest_transcript"],
                 "final_score": final_score,
             }
         )
@@ -190,6 +239,7 @@ def get_summary(subject: str | None = None, batch: str | None = None, session_id
         return {
             "avg_engagement_score": 0,
             "avg_question_score": 0,
+            "avg_voice_score": 0,
             "avg_final_score": 0,
             "most_common_emotion": "N/A",
             "total_logs": 0,
@@ -204,6 +254,7 @@ def get_summary(subject: str | None = None, batch: str | None = None, session_id
     emotions = [row.get("emotion", "N/A") for row in recent_rows if row.get("emotion")]
     avg_engagement = round(sum(student["avg_engagement_score"] for student in students) / len(students), 1) if students else 0
     avg_question = round(sum(student["avg_question_score"] for student in students) / len(students), 1) if students else 0
+    avg_voice = round(sum(student["avg_voice_score"] for student in students) / len(students), 1) if students else 0
     avg_final = round(sum(student["final_score"] for student in students) / len(students), 1) if students else 0
 
     total_idle = events_logs.count_documents({**scope, "event_type": "IDLE"}) if events_logs is not None else 0
@@ -212,6 +263,7 @@ def get_summary(subject: str | None = None, batch: str | None = None, session_id
     return {
         "avg_engagement_score": avg_engagement,
         "avg_question_score": avg_question,
+        "avg_voice_score": avg_voice,
         "avg_final_score": avg_final,
         "most_common_emotion": Counter(emotions).most_common(1)[0][0] if emotions else "N/A",
         "total_logs": total_logs,
@@ -235,6 +287,11 @@ def get_student_profile(student_id: str, subject: str | None = None, batch: str 
             "history": [],
             "assessments": [],
             "avg_question_score": 0,
+            "avg_voice_score": 0,
+            "voice_samples": 0,
+            "avg_speaking_duration": 0,
+            "latest_transcript": "",
+            "voice_history": [],
             "final_score": 0,
         }
 
@@ -266,6 +323,7 @@ def get_student_profile(student_id: str, subject: str | None = None, batch: str 
 
     latest = history[0] if history else {}
     assessment_summary = _assessment_summary(student_id, scope)
+    voice_summary = _voice_summary(student_id, scope)
     final_score = round((0.6 * avg_score) + (0.4 * assessment_summary["avg_question_score"]), 1)
 
     normalized_history = [
@@ -297,5 +355,10 @@ def get_student_profile(student_id: str, subject: str | None = None, batch: str 
         "avg_question_score": assessment_summary["avg_question_score"],
         "question_attempts": assessment_summary["question_attempts"],
         "avg_response_time": assessment_summary["avg_response_time"],
+        "avg_voice_score": voice_summary["avg_voice_score"],
+        "voice_samples": voice_summary["voice_samples"],
+        "avg_speaking_duration": voice_summary["avg_speaking_duration"],
+        "latest_transcript": voice_summary["latest_transcript"],
+        "voice_history": voice_summary.get("recent", []),
         "final_score": final_score,
     }

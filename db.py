@@ -12,6 +12,7 @@ sessions = None
 question_logs = None
 answer_logs = None
 assessments = None
+voice_logs = None
 
 if not MONGO_URI:
     print("[MongoDB] WARNING: MONGO_URI not set in .env - running WITHOUT persistence.")
@@ -38,6 +39,7 @@ else:
         question_logs = db["question_logs"]
         answer_logs = db["answer_logs"]
         assessments = db["assessments"]
+        voice_logs = db["voice_logs"]
 
         print("[MongoDB] Client initialized (Lazy Mode).")
 
@@ -105,6 +107,12 @@ else:
             name="idx_assessment_question",
             background=True,
         )
+        ensure_index(
+            voice_logs,
+            [("student_id", ASCENDING), ("subject", ASCENDING), ("batch", ASCENDING), ("session_id", ASCENDING), ("timestamp", ASCENDING)],
+            name="idx_voice_scope_time",
+            background=True,
+        )
         print("[MongoDB] Indexes created/verified.")
 
     except Exception as e:
@@ -117,3 +125,4 @@ else:
         question_logs = None
         answer_logs = None
         assessments = None
+        voice_logs = None

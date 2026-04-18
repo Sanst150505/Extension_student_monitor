@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import {
   LineChart,
@@ -24,14 +24,19 @@ import {
   TrendingDown,
   Minus,
   Link2,
+  Mic,
+  Award,
+  Sparkles,
+  Volume2,
 } from "lucide-react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import GlassCard from "@/components/GlassCard";
 import DashboardLayout from "@/components/DashboardLayout";
 import { useAuth } from "@/contexts/AuthContext";
 import { useMonitoringProfile } from "@/hooks/useMonitoringProfile";
-import { getStats, getStudentProfile, getSummary } from "@/lib/api";
+import { useVoiceAnalysis } from "@/hooks/useVoiceAnalysis";
+import { getStats, getStudentProfile, getSummary, postVoiceEvent } from "@/lib/api";
 import { extractSessionId } from "@/lib/session";
 import { useSmoothedNumber } from "@/hooks/useSmoothedNumber";
 
@@ -76,6 +81,7 @@ function TrendIcon({ trend }: { trend: "up" | "down" | "stable" }) {
 
 export default function StudentDashboard() {
   const { user } = useAuth();
+  const queryClient = useQueryClient();
   const { profile, setProfile } = useMonitoringProfile({
     student_id: user?.id || "demo_user",
     student_name: user?.name || "Student",
@@ -113,12 +119,80 @@ export default function StudentDashboard() {
   const summary = summaryQuery.data;
   const stats = (statsQuery.data ?? []).filter((entry) => (entry.student_id ?? "") === profile.student_id);
   const student = profileQuery.data;
+  const voice = useVoiceAnalysis();
+  const lastSubmittedRef = useRef("");
+  const [savedVoiceScore, setSavedVoiceScore] = useState<number | null>(null);
+
+  const voiceMutation = useMutation({
+    mutationFn: postVoiceEvent,
+    onSuccess: (data) => {
+      setSavedVoiceScore(data.voice_score ?? null);
+      queryClient.invalidateQueries({ queryKey: ["student-profile", profile.student_id] });
+      queryClient.invalidateQueries({ queryKey: ["students"] });
+      queryClient.invalidateQueries({ queryKey: ["summary"] });
+    },
+  });
+
+  useEffect(() => {
+    if (voice.isListening || voice.status !== "stopped") return;
+    if (!voice.transcript && voice.speakingDuration < 1) return;
+
+    const key = `${voice.transcript}|${voice.speakingDuration.toFixed(1)}|${voice.voiceScore}`;
+    if (lastSubmittedRef.current === key) return;
+    lastSubmittedRef.current = key;
+
+    voiceMutation.mutate({
+      student_id: profile.student_id,
+      student_name: profile.student_name,
+      subject: profile.subject || "General",
+      batch: profile.batch || "General",
+      session_id: extractSessionId(profile.session_id) || "demo_session",
+      transcript: voice.transcript,
+      speaking_duration: Number(voice.speakingDuration.toFixed(1)),
+      avg_volume: Number(voice.avgVolume.toFixed(3)),
+      peak_volume: Number(voice.peakVolume.toFixed(3)),
+      confidence: Number(voice.confidence.toFixed(2)),
+      status: voice.status,
+    });
+  }, [profile.batch, profile.session_id, profile.student_id, profile.student_name, profile.subject, voice.avgVolume, voice.confidence, voice.isListening, voice.peakVolume, voice.speakingDuration, voice.status, voice.transcript, voice.voiceScore, voiceMutation]);
 
   const rawScore = Math.round(student?.history[0]?.engagement_score ?? student?.avg_score ?? summary?.avg_engagement_score ?? 0);
   const smoothScore = Math.round(useSmoothedNumber(rawScore));
   const currentState = student?.current_state || "No Data";
   const currentEmotion = student?.emotion || "No Data";
   const currentTrend = student?.trend || "stable";
+  const voiceScore = Math.round(savedVoiceScore ?? student?.avg_voice_score ?? 0);
+  const attentionStreak = student?.history.reduce((streak, item) => {
+    if (item.attention_status === "Focused") return streak + 1;
+    return streak;
+  }, 0) ?? 0;
+  const badges = [
+    {
+      title: "Focus Streak",
+      unlocked: attentionStreak >= 3,
+      detail: `${attentionStreak} focused snapshots in a row`,
+      image: "/badge-focus-streak.svg",
+      tint: "from-emerald-400/20 to-cyan-400/10",
+    },
+    {
+      title: "Quiz Clutch",
+      unlocked: (student?.avg_question_score ?? 0) >= 80 && (student?.question_attempts ?? 0) > 0,
+      detail: `${Math.round(student?.avg_question_score ?? 0)}% question score`,
+      image: "/badge-quiz-clutch.svg",
+      tint: "from-amber-400/20 to-orange-400/10",
+    },
+    {
+      title: "Voice Spark",
+      unlocked: voiceScore >= 60 && (student?.voice_samples ?? 0) > 0,
+      detail: `${voiceScore}% voice participation`,
+      image: "/badge-voice-spark.svg",
+      tint: "from-fuchsia-400/20 to-violet-400/10",
+    },
+  ];
+  const rewardPoints =
+    Math.round(smoothScore * 0.4) +
+    Math.round((student?.avg_question_score ?? 0) * 0.4) +
+    Math.round(voiceScore * 0.2);
 
   const recentTrend = stats
     .slice(0, 10)
@@ -143,6 +217,7 @@ export default function StudentDashboard() {
       ? "The system is seeing prolonged eye-closure patterns. Take a short reset before the next segment."
       : "No strong sleepy signal is visible.",
     `Emotion is currently ${currentEmotion}.`,
+    `Voice participation score is ${voiceScore}%.`,
     `Final score blends engagement and intervention answers: ${Math.round(student?.final_score ?? 0)}%.`,
   ];
 
@@ -150,6 +225,7 @@ export default function StudentDashboard() {
     { text: `Current attention state: ${currentState === "No Face" ? "No Face Detected" : currentState}.`, type: currentState === "Focused" ? "success" : "warning" },
     { text: `Emotion label: ${currentEmotion}.`, type: "info" },
     { text: `Question score: ${Math.round(student?.avg_question_score ?? 0)}% across ${student?.question_attempts ?? 0} attempts.`, type: "info" },
+    { text: `Voice score: ${voiceScore}% across ${student?.voice_samples ?? 0} mic samples.`, type: "info" },
   ];
 
   return (
@@ -239,6 +315,72 @@ export default function StudentDashboard() {
               </div>
             </div>
           </GlassCard>
+          <GlassCard hover={false}>
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/20">
+                <Mic className="h-5 w-5 text-primary" />
+              </div>
+              <div>
+                <p className="text-sm text-muted-foreground">Voice Score</p>
+                <p className="text-2xl font-display font-bold text-foreground">{voiceScore}%</p>
+              </div>
+            </div>
+          </GlassCard>
+        </div>
+
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+          <GlassCard hover={false}>
+            <div className="mb-4 flex items-center gap-2">
+              <Award className="h-5 w-5 text-primary" />
+              <h3 className="font-display font-semibold text-foreground">Attention Streak</h3>
+            </div>
+            <div className="rounded-2xl border border-border bg-muted/20 p-5">
+              <div className="flex items-end justify-between gap-3">
+                <div>
+                  <p className="text-sm text-muted-foreground">Current streak</p>
+                  <p className="text-4xl font-display font-bold text-foreground">{attentionStreak}</p>
+                </div>
+                <div className="rounded-full bg-primary/10 px-3 py-1 text-sm font-medium text-primary">
+                  {attentionStreak >= 5 ? "On fire" : attentionStreak >= 3 ? "Building momentum" : "Keep going"}
+                </div>
+              </div>
+              <div className="mt-4 h-3 overflow-hidden rounded-full bg-muted">
+                <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${Math.min(100, attentionStreak * 20)}%` }} />
+              </div>
+              <p className="mt-3 text-sm text-muted-foreground">
+                Stay focused, answer the intervention questions, and keep your streak alive.
+              </p>
+            </div>
+          </GlassCard>
+
+          <GlassCard hover={false}>
+            <div className="mb-4 flex items-center gap-2">
+              <Sparkles className="h-5 w-5 text-primary" />
+              <h3 className="font-display font-semibold text-foreground">Badges & Rewards</h3>
+            </div>
+            <div className="space-y-3">
+              {badges.map((badge) => (
+                <div key={badge.title} className={`flex items-center justify-between rounded-xl border border-border bg-gradient-to-r ${badge.tint} p-4`}>
+                  <div className="flex items-center gap-3">
+                    <div className={`overflow-hidden rounded-xl border border-white/10 bg-background/70 p-1 ${badge.unlocked ? "" : "grayscale opacity-60"}`}>
+                      <img src={badge.image} alt={badge.title} className="h-16 w-16 object-cover" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-medium text-foreground">{badge.title}</p>
+                      <p className="text-xs text-muted-foreground">{badge.detail}</p>
+                    </div>
+                  </div>
+                  <div className={`rounded-full px-3 py-1 text-xs font-semibold ${badge.unlocked ? "bg-primary/15 text-primary" : "bg-muted text-muted-foreground"}`}>
+                    {badge.unlocked ? "Unlocked" : "Locked"}
+                  </div>
+                </div>
+              ))}
+              <div className="rounded-xl border border-border bg-muted/20 p-4">
+                <p className="text-sm text-muted-foreground">Reward Points</p>
+                <p className="mt-1 text-2xl font-display font-bold text-foreground">{rewardPoints}</p>
+              </div>
+            </div>
+          </GlassCard>
         </div>
 
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
@@ -290,6 +432,47 @@ export default function StudentDashboard() {
             ) : (
               <p className="text-sm text-muted-foreground">No distraction events logged yet.</p>
             )}
+          </GlassCard>
+
+          <GlassCard hover={false}>
+            <div className="mb-4 flex items-center gap-2">
+              <Volume2 className="h-5 w-5 text-primary" />
+              <h3 className="font-display font-semibold text-foreground">Voice Analysis</h3>
+            </div>
+            <div className="space-y-4">
+              <div className="flex flex-wrap items-center gap-3">
+                <button
+                  type="button"
+                  onClick={voice.isListening ? voice.stopListening : voice.startListening}
+                  disabled={!voice.isSupported}
+                  className="rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {voice.isListening ? "Stop Voice Capture" : "Start Voice Capture"}
+                </button>
+                <span className="text-sm text-muted-foreground">
+                  {voice.isSupported ? "Browser mic analysis is ready." : "Chrome microphone + speech recognition is required."}
+                </span>
+              </div>
+              <div className="rounded-lg border border-border bg-muted/20 p-4">
+                <div className="mb-3 flex items-center justify-between text-sm">
+                  <span className="text-muted-foreground">Live voice energy</span>
+                  <span className="font-medium text-foreground">{Math.round(voice.avgVolume * 100)}%</span>
+                </div>
+                <div className="h-3 overflow-hidden rounded-full bg-muted">
+                  <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${Math.min(100, Math.round(voice.avgVolume * 100))}%` }} />
+                </div>
+                <div className="mt-3 grid gap-2 text-sm text-muted-foreground md:grid-cols-3">
+                  <span>Status: <span className="text-foreground">{voice.status}</span></span>
+                  <span>Duration: <span className="text-foreground">{voice.speakingDuration.toFixed(1)}s</span></span>
+                  <span>Confidence: <span className="text-foreground">{Math.round(voice.confidence * 100)}%</span></span>
+                </div>
+              </div>
+              <div className="rounded-lg border border-border bg-muted/20 p-4">
+                <p className="mb-2 text-sm text-muted-foreground">Transcript</p>
+                <p className="min-h-16 text-sm text-foreground">{voice.transcript || student?.latest_transcript || "Start speaking to capture a transcript."}</p>
+              </div>
+              {voice.error ? <p className="text-sm text-destructive">{voice.error}</p> : null}
+            </div>
           </GlassCard>
 
           <GlassCard hover={false}>

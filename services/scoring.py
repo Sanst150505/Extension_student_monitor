@@ -1,13 +1,15 @@
 import time
 
 # ── Configuration ────────────────────────────────────────────────────────────
-WINDOW_SIZE = 5
-LOW_SCORE_THRESHOLD = 40
+WINDOW_SIZE = 12
+LOW_SCORE_THRESHOLD = 45
 COOLDOWN_SECONDS = 60
+SUSTAINED_LOW_SECONDS = 15
 
 # ── State ────────────────────────────────────────────────────────────────────
 attention_buffer = []      # stores last 5 scores
 last_question_time = 0      # timestamp of last triggered question
+low_attention_started_at = 0.0
 
 def compute_engagement_score(
     face_detected: bool,
@@ -41,14 +43,24 @@ def update_attention_and_check_trigger(score: float):
     Updates the sliding window and checks if a question should be triggered.
     Returns: (ask_question: bool, difficulty: str)
     """
-    global attention_buffer
+    global attention_buffer, low_attention_started_at
 
     # Update buffer
     attention_buffer.append(score)
     if len(attention_buffer) > WINDOW_SIZE:
         attention_buffer.pop(0)
 
-    # Check if we have enough data
+    now = time.time()
+    if score < LOW_SCORE_THRESHOLD:
+        if low_attention_started_at == 0.0:
+            low_attention_started_at = now
+    else:
+        low_attention_started_at = 0.0
+
+    # Require a sustained low-attention duration before triggering.
+    if low_attention_started_at == 0.0 or (now - low_attention_started_at) < SUSTAINED_LOW_SECONDS:
+        return False, "medium"
+
     if len(attention_buffer) < WINDOW_SIZE:
         return False, "medium"
 
@@ -56,7 +68,7 @@ def update_attention_and_check_trigger(score: float):
     avg_score = sum(attention_buffer) / len(attention_buffer)
     low_scores_count = sum(1 for s in attention_buffer if s < LOW_SCORE_THRESHOLD)
 
-    trigger = (avg_score < LOW_SCORE_THRESHOLD) or (low_scores_count >= 3)
+    trigger = (avg_score < LOW_SCORE_THRESHOLD) or (low_scores_count >= 10)
     
     # ── Debug Logging ────────────────────────────────────────────────────────
     print(f"[Scoring] Buffer: {len(attention_buffer)}/{WINDOW_SIZE}, Avg: {avg_score:.1f}, LowCount: {low_scores_count}")
@@ -94,3 +106,10 @@ def get_difficulty(avg_score: float) -> str:
         return "medium"
     else:
         return "hard"
+
+
+def reset_trigger_state():
+    global last_question_time, low_attention_started_at
+    last_question_time = 0
+    low_attention_started_at = 0.0
+    attention_buffer.clear()

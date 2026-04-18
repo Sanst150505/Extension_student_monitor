@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
 # Import modular routers
-from routes import analyze, question, answer, events, stats
+from routes import analyze, question, answer, events, stats, voice
 
 # 🚀 App initialization
 app = FastAPI(
@@ -35,6 +35,7 @@ app.include_router(question.router, tags=["Question"])
 app.include_router(answer.router, tags=["Answer"])
 app.include_router(events.router, tags=["Events"])
 app.include_router(stats.router, tags=["Stats"])
+app.include_router(voice.router, tags=["Voice"])
 
 
 # ── Health Check (VERY USEFUL for debugging) ──────────────────────────────────

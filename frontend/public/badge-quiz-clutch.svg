@@ -1,0 +1,14 @@
+<svg width="160" height="160" viewBox="0 0 160 160" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="quizBg" x1="18" y1="18" x2="142" y2="142" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFD86B"/>
+      <stop offset="1" stop-color="#F77737"/>
+    </linearGradient>
+  </defs>
+  <circle cx="80" cy="80" r="70" fill="url(#quizBg)"/>
+  <circle cx="80" cy="80" r="55" fill="#3A190A" fill-opacity="0.25"/>
+  <rect x="47" y="43" width="66" height="74" rx="12" fill="#FFF9EE"/>
+  <rect x="59" y="59" width="42" height="8" rx="4" fill="#F77737"/>
+  <rect x="59" y="75" width="28" height="8" rx="4" fill="#F9B04A"/>
+  <path d="M63 96L73 106L98 82" stroke="#16A34A" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

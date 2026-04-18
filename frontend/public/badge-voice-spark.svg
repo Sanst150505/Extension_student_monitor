@@ -1,0 +1,16 @@
+<svg width="160" height="160" viewBox="0 0 160 160" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="voiceBg" x1="23" y1="14" x2="138" y2="145" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#7C5CFF"/>
+      <stop offset="1" stop-color="#ED4FD0"/>
+    </linearGradient>
+  </defs>
+  <circle cx="80" cy="80" r="70" fill="url(#voiceBg)"/>
+  <circle cx="80" cy="80" r="54" fill="#180930" fill-opacity="0.28"/>
+  <rect x="66" y="40" width="28" height="48" rx="14" fill="#FFF8FF"/>
+  <path d="M54 75C54 89.3594 65.6406 101 80 101C94.3594 101 106 89.3594 106 75" stroke="#FFF8FF" stroke-width="10" stroke-linecap="round"/>
+  <path d="M80 101V118" stroke="#FFF8FF" stroke-width="10" stroke-linecap="round"/>
+  <path d="M64 118H96" stroke="#FFF8FF" stroke-width="10" stroke-linecap="round"/>
+  <circle cx="116" cy="50" r="10" fill="#FFE16A"/>
+  <circle cx="45" cy="55" r="6" fill="#FFE16A" fill-opacity="0.85"/>
+</svg>

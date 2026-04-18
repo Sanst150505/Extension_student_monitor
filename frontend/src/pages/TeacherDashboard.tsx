@@ -7,6 +7,7 @@ import {
   Database,
   Eye,
   ShieldAlert,
+  Volume2,
   TrendingDown,
   TrendingUp,
   Minus,
@@ -162,7 +163,7 @@ export default function TeacherDashboard() {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-5">
           <GlassCard hover={false}>
             <div className="flex items-center gap-3">
               <div className="flex h-10 w-10 items-center justify-center rounded-lg gradient-primary">
@@ -183,6 +184,18 @@ export default function TeacherDashboard() {
               <div>
                 <p className="text-sm text-muted-foreground">Avg Question Score</p>
                 <p className="text-2xl font-display font-bold text-foreground">{Math.round(summary?.avg_question_score ?? 0)}%</p>
+              </div>
+            </div>
+          </GlassCard>
+
+          <GlassCard hover={false}>
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/20">
+                <Volume2 className="h-5 w-5 text-primary" />
+              </div>
+              <div>
+                <p className="text-sm text-muted-foreground">Avg Voice Score</p>
+                <p className="text-2xl font-display font-bold text-foreground">{Math.round(summary?.avg_voice_score ?? 0)}%</p>
               </div>
             </div>
           </GlassCard>
@@ -277,6 +290,7 @@ export default function TeacherDashboard() {
                       <th className="px-4 py-3 text-left text-sm font-medium text-muted-foreground">Attention</th>
                       <th className="px-4 py-3 text-left text-sm font-medium text-muted-foreground">Engagement</th>
                       <th className="px-4 py-3 text-left text-sm font-medium text-muted-foreground">Emotion</th>
+                      <th className="px-4 py-3 text-left text-sm font-medium text-muted-foreground">Voice</th>
                       <th className="px-4 py-3 text-left text-sm font-medium text-muted-foreground">Question</th>
                       <th className="px-4 py-3 text-left text-sm font-medium text-muted-foreground">Final</th>
                     </tr>
@@ -291,6 +305,7 @@ export default function TeacherDashboard() {
                         <td className="px-4 py-3 text-sm text-muted-foreground">{student.attention_status}</td>
                         <td className="px-4 py-3 text-sm text-foreground">{Math.round(student.engagement_score)}%</td>
                         <td className="px-4 py-3 text-sm text-muted-foreground">{student.emotion}</td>
+                        <td className="px-4 py-3 text-sm text-foreground">{Math.round(student.avg_voice_score)}%</td>
                         <td className="px-4 py-3 text-sm text-foreground">{Math.round(student.avg_question_score)}%</td>
                         <td className="px-4 py-3 text-sm text-foreground">{Math.round(student.final_score)}%</td>
                       </tr>
@@ -362,6 +377,10 @@ export default function TeacherDashboard() {
                       <div className="flex items-center justify-between">
                         <span>Engagement</span>
                         <span className="text-foreground">{Math.round(student.engagement_score)}%</span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span>Voice</span>
+                        <span className="text-foreground">{Math.round(student.avg_voice_score)}%</span>
                       </div>
                       <div className="flex items-center justify-between">
                         <span>Question Score</span>
